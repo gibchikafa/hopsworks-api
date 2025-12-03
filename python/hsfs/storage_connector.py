@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import base64
+from enum import Enum
 import logging
 import os
 import posixpath
@@ -31,7 +32,6 @@ from hopsworks_common.core.constants import HAS_NUMPY, HAS_POLARS
 from hsfs import engine
 from hsfs.core import data_source as ds
 from hsfs.core import data_source_api, storage_connector_api
-from hsfs.core import data_source_data as dsd
 
 
 if HAS_NUMPY:
@@ -54,6 +54,9 @@ class StorageConnector(ABC):
     GCS = "GCS"
     BIGQUERY = "BIGQUERY"
     RDS = "RDS"
+    CRM = "CRM"
+    REST = "REST"  
+
     NOT_FOUND_ERROR_CODE = 270042
 
     def __init__(
@@ -84,6 +87,8 @@ class StorageConnector(ABC):
         "SnowflakeConnector",
         "BigQueryConnector",
         "RdsConnector",
+        "CRMAndAnalyticsConnector",
+        "RestConnector",
     ]:
         json_decamelized = humps.decamelize(json_dict)
         _ = json_decamelized.pop("type", None)
@@ -104,6 +109,8 @@ class StorageConnector(ABC):
         "SnowflakeConnector",
         "BigQueryConnector",
         "RdsConnector",
+        "CRMAndAnalyticsConnector",
+        "RestConnector",
     ]:
         json_decamelized = humps.decamelize(json_dict)
         _ = json_decamelized.pop("type", None)
@@ -147,11 +154,6 @@ class StorageConnector(ABC):
         pass
 
     def prepare_spark(self, path: Optional[str] = None) -> Optional[str]:
-        """Prepare Spark to use this Storage Connector.
-
-        # Arguments
-            path: Path to prepare for reading from cloud storage. Defaults to `None`.
-        """
         return path
 
     def read(
@@ -247,46 +249,10 @@ class StorageConnector(ABC):
         else:
             return []
 
-    def get_databases(self) -> list[str]:
-        """
-        Retrieve the list of available databases.
-
-        !!! example
-            ```python
-            # connect to the Feature Store
-            fs = ...
-
-            sc = fs.get_storage_connector("conn_name")
-
-            databases = sc.get_databases()
-            ```
-
-        Returns:
-            list[str]: A list of database names available in the storage connector.
-        """
+    def get_databases(self):
         return self._data_source_api.get_databases(self._featurestore_id, self._name)
 
-    def get_tables(self, database: str = None) -> list[ds.DataSource]:
-        """
-        Retrieve the list of tables from the specified database.
-
-        !!! example
-            ```python
-            # connect to the Feature Store
-            fs = ...
-
-            sc = fs.get_storage_connector("conn_name")
-
-            tables = sc.get_tables("database_name")
-            ```
-
-        Args:
-            database (str, optional): The name of the database to list tables from.
-                If not provided, the default database is used.
-
-        Returns:
-            list[DataSource]: A list of DataSource objects representing the tables.
-        """
+    def get_tables(self, database: str):
         if not database:
             if self.type == StorageConnector.REDSHIFT:
                 database = self.database_name
@@ -305,54 +271,12 @@ class StorageConnector(ABC):
             self._featurestore_id, self._name, database
         )
 
-    def get_data(self, data_source: ds.DataSource) -> dsd.DataSourceData:
-        """
-        Retrieve the data from the data source.
-
-        !!! example
-            ```python
-            # connect to the Feature Store
-            fs = ...
-
-            sc = fs.get_storage_connector("conn_name")
-
-            tables = sc.get_tables("database_name")
-
-            data = sc.get_data(tables[0])
-            ```
-
-        Args:
-            data_source (DataSource): The data source to retrieve data from.
-
-        Returns:
-            DataSourceData: An object containing the data retrieved from the data source.
-        """
+    def get_data(self, data_source: ds.DataSource):
         return self._data_source_api.get_data(
             self._featurestore_id, self._name, data_source
         )
 
-    def get_metadata(self, data_source: ds.DataSource) -> dict:
-        """
-        Retrieve metadata information about the data source.
-
-        !!! example
-            ```python
-            # connect to the Feature Store
-            fs = ...
-
-            sc = fs.get_storage_connector("conn_name")
-
-            tables = sc.get_tables("database_name")
-
-            metadata = sc.get_metadata(tables[0])
-            ```
-
-        Args:
-            data_source (DataSource): The data source to retrieve metadata from.
-
-        Returns:
-            dict: A dictionary containing metadata about the data source.
-        """
+    def get_metadata(self, data_source: ds.DataSource):
         return self._data_source_api.get_metadata(
             self._featurestore_id, self._name, data_source
         )
@@ -475,10 +399,6 @@ class S3Connector(StorageConnector):
 
     @property
     def arguments(self) -> Optional[Dict[str, Any]]:
-        """Additional spark options for the S3 connector, passed as a dictionary.
-        These are set using the `Spark Options` field in the UI when creating the connector.
-        Example: `{"fs.s3a.endpoint": "s3.eu-west-1.amazonaws.com", "fs.s3a.path.style.access": "true"}`
-        """
         return self._arguments
 
     def spark_options(self) -> Dict[str, str]:
@@ -2068,3 +1988,254 @@ class RdsConnector(StorageConnector):
         return engine.get_instance().read(
             self, self.JDBC_FORMAT, options, None, dataframe_type
         )
+
+class CRMSource(Enum):
+    HUBSPOT = "hubspot"
+    FACEBOOK_ADS = "facebook_ads"
+    SALESFORCE = "salesforce"
+    PIPEDRIVE = "pipedrive"
+    FRESHDESK = "freshdesk"
+    GOOGLE_ADS = "google_ads"
+    GOOGLE_ANALYTICS = "google_analytics"
+
+class CRMAndAnalyticsConnector(StorageConnector):
+    type = StorageConnector.CRM
+
+    def __init__(
+        self,
+        id: Optional[int],
+        name: str,
+        featurestore_id: int,
+        crm_type: CRMSource,
+        description: Optional[str] = None,
+        # members specific to type of connector
+        api_key: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        domain: Optional[str] = None,
+        account_id: Optional[str] = None,
+        key_path: Optional[str] = None,
+        property_id: Optional[str] = None,
+        dev_token: Optional[str] = None,
+        customer_id: Optional[str] = None,
+        impersonated_email: Optional[str] = None,
+        refresh_token: Optional[str] = None,
+        headers: Optional[Dict[str, Any]] = None,
+        parameters: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(id, name, description, featurestore_id)
+        self._api_key = api_key
+        self._crm_type = crm_type
+        self._username = username
+        self._password = password
+        self._domain = domain
+        self._account_id = account_id
+        self._key_path = key_path
+        self._property_id = property_id
+        self._dev_token = dev_token
+        self._customer_id = customer_id
+        self._impersonated_email = impersonated_email
+        self._refresh_token = refresh_token
+        self._headers = headers or {}
+        self._parameters = parameters or {}
+
+    @property
+    def api_key(self) -> Optional[str]:
+        return self._api_key
+
+    @property
+    def crm_type(self) -> Optional[str]:
+        return self._crm_type
+
+    @property
+    def username(self) -> Optional[str]:
+        return self._username
+
+    @property
+    def password(self) -> Optional[str]:
+        return self._password
+
+    @property
+    def domain(self) -> Optional[str]:
+        return self._domain
+
+    @property
+    def account_id(self) -> Optional[str]:
+        return self._account_id
+
+    @property
+    def key_path(self) -> Optional[str]:
+        return self._key_path
+
+    @property
+    def property_id(self) -> Optional[str]:
+        return self._property_id
+
+    @property
+    def dev_token(self) -> Optional[str]:
+        return self._dev_token
+
+    @property
+    def customer_id(self) -> Optional[str]:
+        return self._customer_id
+
+    @property
+    def impersonated_email(self) -> Optional[str]:
+        return self._impersonated_email
+
+    @property
+    def refresh_token(self) -> Optional[str]:
+        return self._refresh_token
+
+    @property
+    def headers(self) -> Dict[str, Any]:
+        """Additional headers"""
+        return self._headers
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        """Additional parameters"""
+        return self._parameters
+    
+    def spark_options(self) -> Dict[str, Any]:
+        """Return prepared options to be passed to Spark, based on the additional
+        arguments.
+        """
+        return {}
+    
+class RestConnectorHeader:
+    def __init__(self, name: str, value: str) -> None:
+        self._name = name
+        self._value = value
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def value(self) -> str:
+        return self._value
+class RestConnectorClientConfig:
+    def __init__(self, base_url: str, headers: Optional[List[RestConnectorHeader]] = None) -> None:
+        self._base_url = base_url
+        self._headers = headers or [] 
+
+    @property
+    def base_url(self) -> str:
+        return self._base_url 
+      
+    @property
+    def headers(self) -> List[RestConnectorHeader]:
+        return self._headers
+
+class RestConnectorAuthConfig:
+    def __init__(
+        self,
+        bearer_token: Optional[str] = None,
+        api_key: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        access_token: Optional[str] = None,
+        access_token_url: Optional[str] = None,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        access_token_request_params: Optional[List[Dict[str, Any]]] = None,
+        default_token_timeout_minutes: Optional[int] = None,
+    ) -> None:
+        self._bearer_token = bearer_token
+        self._api_key = api_key
+        self._username = username
+        self._password = password
+        self._access_token = access_token
+        self._access_token_url = access_token_url
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._access_token_request_params = access_token_request_params or []
+        self._default_token_timeout_minutes = default_token_timeout_minutes
+
+    @property
+    def bearer_token(self) -> Optional[str]:
+        return self._bearer_token
+
+    @property
+    def api_key(self) -> Optional[str]:
+        return self._api_key
+
+    @property
+    def username(self) -> Optional[str]:
+        return self._username
+
+    @property
+    def password(self) -> Optional[str]:
+        return self._password
+
+    @property
+    def access_token(self) -> Optional[str]:
+        return self._access_token
+
+    @property
+    def access_token_url(self) -> Optional[str]:
+        return self._access_token_url
+
+    @property
+    def client_id(self) -> Optional[str]:
+        return self._client_id
+
+    @property
+    def client_secret(self) -> Optional[str]:
+        return self._client_secret
+
+    @property
+    def access_token_request_params(self) -> List[Dict[str, Any]]:
+        return self._access_token_request_params
+
+    @property
+    def default_token_timeout_minutes(self) -> Optional[int]:
+        return self._default_token_timeout_minutes
+
+class RestConnectorAuthType(Enum):
+    NONE = "none"
+    BASIC = "http_basic"
+    BEARER = "bearer"
+    API_KEY = "api_key"
+    OAUTH2 = "oauth2_client_credentials"
+    
+class RestConnector(StorageConnector):
+    type = StorageConnector.REST
+
+    def __init__(
+        self,
+        id: Optional[int],
+        name: str,
+        featurestore_id: int,
+        description: Optional[str] = None,
+        # members specific to type of connector
+        client_config: Optional[RestConnectorClientConfig] = None,
+        auth_config: Optional[RestConnectorAuthConfig] = None,
+        auth_type: Optional[RestConnectorAuthType] = RestConnectorAuthType.NONE,
+        **kwargs,
+    ) -> None:
+        super().__init__(id, name, description, featurestore_id)
+        self._client_config = client_config
+        self._auth_config = auth_config
+        self._auth_type = auth_type
+
+    @property
+    def client_config(self) -> Optional[RestConnectorClientConfig]:
+        return self._client_config
+    
+    @property
+    def auth_config(self) -> Optional[RestConnectorAuthConfig]:
+        return self._auth_config
+    
+    @property
+    def auth_type(self) -> Optional[RestConnectorAuthType]:
+        return self._auth_type
+    
+    def spark_options(self) -> Dict[str, Any]:
+        """Return prepared options to be passed to Spark, based on the additional
+        arguments.
+        """
+        return {}
+    

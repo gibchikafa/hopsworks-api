@@ -157,6 +157,7 @@ class FeatureGroupBase:
         ttl: Optional[Union[int, float, timedelta]] = None,
         ttl_enabled: Optional[bool] = None,
         online_disk: Optional[bool] = None,
+        sink_enabled: Optional[bool] = False,
         **kwargs,
     ) -> None:
         """Initialize a feature group object.
@@ -182,6 +183,7 @@ class FeatureGroupBase:
             ttl_enabled: Whether to enable time-to-live (TTL) for this feature group. Defaults to True if ttl is set.
             online_disk: Whether to enable online disk storage for this feature group. Overrides online_config.table_space.
                 Defaults to using cluster wide configuration 'featurestore_online_tablespace' to identify tablespace for disk storage.
+            sink_enabled: Whether to enable sink from data source to feature group
             **kwargs: Additional keyword arguments
         """
         self._version = version
@@ -201,6 +203,7 @@ class FeatureGroupBase:
         self._alert_api = alerts_api.AlertsApi()
         self.ttl = ttl
         self._ttl_enabled = ttl_enabled if ttl_enabled is not None else ttl is not None
+        self._sink_enabled = sink_enabled
 
         if storage_connector is not None and isinstance(storage_connector, dict):
             self._storage_connector = sc.StorageConnector.from_response_json(
@@ -2574,7 +2577,11 @@ class FeatureGroupBase:
         self._feature_group_engine.update_ttl(self, None, False)
         return self
 
-
+    @property
+    def sink_enabled(self) -> bool:
+        """Get whether sink is enabled for this feature group."""
+        return self._sink_enabled
+    
 @typechecked
 class FeatureGroup(FeatureGroupBase):
     # TODO: Add docstring
@@ -2640,6 +2647,7 @@ class FeatureGroup(FeatureGroupBase):
         ttl: Optional[Union[int, float, timedelta]] = None,
         ttl_enabled: Optional[bool] = None,
         online_disk: Optional[bool] = None,
+        sink_enabled: Optional[bool] = False,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -2662,6 +2670,7 @@ class FeatureGroup(FeatureGroupBase):
             ttl=ttl,
             ttl_enabled=ttl_enabled,
             online_disk=online_disk,
+            sink_enabled=sink_enabled,
         )
 
         self._feature_store_name: Optional[str] = featurestore_name
@@ -4121,6 +4130,7 @@ class FeatureGroup(FeatureGroupBase):
             ],
             "ttl": self.ttl,
             "ttlEnabled": self._ttl_enabled,
+            "sinkEnabled": self._sink_enabled,
         }
         if self.data_source:
             fg_meta_dict["dataSource"] = self.data_source.to_dict()
@@ -4852,7 +4862,6 @@ class ExternalFeatureGroup(FeatureGroupBase):
     def feature_store_name(self) -> Optional[str]:
         """Name of the feature store in which the feature group is located."""
         return self._feature_store_name
-
 
 @typechecked
 class SpineGroup(FeatureGroupBase):

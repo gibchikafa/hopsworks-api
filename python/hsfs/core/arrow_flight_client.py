@@ -642,7 +642,7 @@ def _serialize_featuregroup_connector(fg, query, on_demand_fg_aliases):
                     )
     elif fg.time_travel_format == "DELTA":
         connector["time_travel_type"] = "delta"
-        if fg.storage_connector:
+        if fg.storage_connector and not fg.sink_enabled:
             connector["type"] = fg.storage_connector.type
             connector["options"] = _get_connector_options(fg)
         else:
