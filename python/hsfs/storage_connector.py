@@ -21,6 +21,7 @@ import logging
 import os
 import posixpath
 import re
+import time
 import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, TypeVar, Union
@@ -32,6 +33,8 @@ from hopsworks_common.core.constants import HAS_NUMPY, HAS_POLARS
 from hsfs import engine
 from hsfs.core import data_source as ds
 from hsfs.core import data_source_api, storage_connector_api
+from python.hopsworks_common.client.exceptions import DataSourceException
+from python.hsfs.core.data_source_data import DataSourceData
 
 
 if HAS_NUMPY:
@@ -250,10 +253,18 @@ class StorageConnector(ABC):
             return []
 
     def get_databases(self):
+        if self.type == StorageConnector.CRM or self.type == StorageConnector.REST:
+            raise ValueError(
+                "This connector type does not support fetching databases."
+            )
         return self._data_source_api.get_databases(self._featurestore_id, self._name)
 
-    def get_tables(self, database: str):
-        if not database:
+    def get_tables(self, database: str = None):
+        if self.type == StorageConnector.REST:
+            raise ValueError(
+                "This connector type does not support fetching tables."
+            )
+        if not database and self.type != StorageConnector.CRM:
             if self.type == StorageConnector.REDSHIFT:
                 database = self.database_name
             elif self.type == StorageConnector.SNOWFLAKE:
@@ -267,19 +278,46 @@ class StorageConnector(ABC):
                     "Database name is required for this connector type. "
                     "Please provide a database name."
                 )
+        if self.type == StorageConnector.CRM:
+            return self._data_source_api.get_crm_resources(
+                self._featurestore_id, self._name
+            )   
+    
         return self._data_source_api.get_tables(
             self._featurestore_id, self._name, database
         )
 
     def get_data(self, data_source: ds.DataSource):
+        if self.type == StorageConnector.REST or self.type == StorageConnector.CRM:
+            return self._get_no_sql_data(data_source)
         return self._data_source_api.get_data(
             self._featurestore_id, self._name, data_source
         )
 
     def get_metadata(self, data_source: ds.DataSource):
+        if self.type == StorageConnector.REST or self.type == StorageConnector.CRM:
+            raise ValueError(
+                "This connector type does not support fetching metadata."
+            )
         return self._data_source_api.get_metadata(
             self._featurestore_id, self._name, data_source
         )
+    
+
+    def _get_no_sql_data(self, data_source: ds.DataSource):
+        data :DataSourceData =  self._data_source_api.get_no_sql_data(self.type, data_source)
+
+        while data.schema_fetch_in_progress:
+            time.sleep(3)
+            data = self._data_source_api.get_no_sql_data(self.type, data_source)
+            _logger.info("Schema fetch in progress...")
+        
+        if data.schema_fetch_failed:
+            raise DataSourceException("Schema fetch failed:\n{}".format(data.schema_fetch_logs))
+        else:
+            _logger.info("Schema fetch succeeded.")
+
+        return data
 
 
 class HopsFSConnector(StorageConnector):
