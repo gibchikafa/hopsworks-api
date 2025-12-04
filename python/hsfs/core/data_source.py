@@ -19,6 +19,7 @@ import json
 from typing import (
     Any,
     Dict,
+    List,
     Optional,
 )
 
@@ -41,6 +42,8 @@ class DataSource:
         group: Optional[str] = None,
         table: Optional[str] = None,
         path: Optional[str] = None,
+        metrics: Optional[List[str]] = [],
+        dimensions: Optional[List[str]] = [],  
         **kwargs,
     ):
         self._query = query
@@ -48,6 +51,9 @@ class DataSource:
         self._group = group
         self._table = table
         self._path = path
+        self._kwargs = kwargs
+        self._metrics = metrics
+        self._dimensions = dimensions
 
     @classmethod
     def from_response_json(cls, json_dict: Dict[str, Any]) -> list[DataSource]:
@@ -69,6 +75,7 @@ class DataSource:
             "group": self._group,
             "table": self._table,
             "path": self._path,
+            "kwargs": self._kwargs,
         }
 
     def json(self):
@@ -113,6 +120,26 @@ class DataSource:
     @path.setter
     def path(self, path: str) -> None:
         self._path = path
+
+    @property
+    def metrics(self) -> List[str]:
+        return self._metrics
+    
+    @metrics.setter
+    def metrics(self, metrics: List[str]) -> None:
+        self._metrics = metrics
+
+    @property
+    def dimensions(self) -> List[str]:
+        return self._dimensions
+    
+    @dimensions.setter
+    def dimensions(self, dimensions: List[str]) -> None:
+        self._dimensions = dimensions
+
+    @property
+    def kwargs(self) -> Dict[str, Any]:
+        return self._kwargs if self._kwargs else {}
 
     def _update_storage_connector(self, storage_connector: sc.StorageConnector):
         """

@@ -48,7 +48,9 @@ class DataSourceApi:
             "data_source",
             "resources",
         ]
-        return _client._send_request("GET", path_params)
+        return dsd.DataSourceData.from_response_json(
+            _client._send_request("GET", path_params)
+        )
 
     def get_tables(
         self, feature_store_id: int, name: str, database: str
@@ -71,14 +73,14 @@ class DataSourceApi:
             _client._send_request("GET", path_params, query_params)
         )
     
-    def get_no_sql_data(self, connector_type: str, data_source: ds.DataSource) -> dsd.DataSourceData:
+    def get_no_sql_data(self, feature_store_id: int, name: str, connector_type: str, data_source: ds.DataSource) -> dsd.DataSourceData:
         if connector_type == "REST":
             return self._get_rest_data(
-                self._featurestore_id, self._name, data_source
+                feature_store_id, name, data_source
             )
         elif connector_type == "CRM":
             return self._get_crm_data(
-                self._featurestore_id, self._name, data_source
+                feature_store_id, name, data_source
             )
         else:
             raise ValueError(
@@ -86,7 +88,7 @@ class DataSourceApi:
             )
     
     def _get_rest_data(
-        self, feature_store_id: int, name: str, resource: str, endpoint_config: dict
+        self, feature_store_id: int, name: str, data_source: ds.DataSource,
     ) -> dsd.DataSourceData:
         _client = client.get_instance()
         path_params = [
@@ -98,11 +100,11 @@ class DataSourceApi:
             name,
             "data_source",
             "resources",
-            resource
+            data_source.table,
         ]
 
         return dsd.DataSourceData.from_response_json(
-            _client._send_request("POST", path_params, data=ds.get_kwargs().to_dict())
+            _client._send_request("POST", path_params, data=data_source.kwargs)
         )
 
     def _get_crm_data(
@@ -118,10 +120,10 @@ class DataSourceApi:
             name,
             "data_source",
             "resources",
-            ds.table,
+            data_source.table,
         ]
 
-        query_params = ds.get_kwargs().to_dict()
+        query_params = data_source.kwargs
 
         return dsd.DataSourceData.from_response_json(
             _client._send_request("GET", path_params, query_params)

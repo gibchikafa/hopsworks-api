@@ -38,6 +38,7 @@ class DataSourceData:
         schema_fetch_failed: Optional[bool] = False,
         schema_fetch_in_progress: Optional[bool] = False,
         schema_fetch_logs: Optional[str] = None,
+        supported_resources: list[str] = None,
         **kwargs,
     ):
         self._limit = limit
@@ -46,6 +47,7 @@ class DataSourceData:
         self._schema_fetch_failed = schema_fetch_failed
         self._schema_fetch_in_progress = schema_fetch_in_progress
         self._schema_fetch_logs = schema_fetch_logs
+        self._supported_resources = supported_resources
 
     @classmethod
     def from_response_json(cls, json_dict: Dict[str, Any]) -> DataSourceData:
@@ -79,3 +81,7 @@ class DataSourceData:
     @property
     def schema_fetch_logs(self) -> Optional[str]:
         return self._schema_fetch_logs
+    
+    @property
+    def supported_resources(self) -> Optional[list[str]]:
+        return self._supported_resources

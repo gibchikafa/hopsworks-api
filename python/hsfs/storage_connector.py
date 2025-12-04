@@ -33,8 +33,8 @@ from hopsworks_common.core.constants import HAS_NUMPY, HAS_POLARS
 from hsfs import engine
 from hsfs.core import data_source as ds
 from hsfs.core import data_source_api, storage_connector_api
-from python.hopsworks_common.client.exceptions import DataSourceException
-from python.hsfs.core.data_source_data import DataSourceData
+from hopsworks_common.client.exceptions import DataSourceException
+from hsfs.core.data_source_data import DataSourceData
 
 
 if HAS_NUMPY:
@@ -279,9 +279,10 @@ class StorageConnector(ABC):
                     "Please provide a database name."
                 )
         if self.type == StorageConnector.CRM:
-            return self._data_source_api.get_crm_resources(
+            data:DataSourceData = self._data_source_api.get_crm_resources(
                 self._featurestore_id, self._name
             )   
+            return data.supported_resources
     
         return self._data_source_api.get_tables(
             self._featurestore_id, self._name, database
@@ -305,11 +306,11 @@ class StorageConnector(ABC):
     
 
     def _get_no_sql_data(self, data_source: ds.DataSource):
-        data :DataSourceData =  self._data_source_api.get_no_sql_data(self.type, data_source)
+        data :DataSourceData =  self._data_source_api.get_no_sql_data(self._featurestore_id, self._name, self.type, data_source)
 
         while data.schema_fetch_in_progress:
             time.sleep(3)
-            data = self._data_source_api.get_no_sql_data(self.type, data_source)
+            data = self._data_source_api.get_no_sql_data(self._featurestore_id, self._name, self.type, data_source)
             _logger.info("Schema fetch in progress...")
         
         if data.schema_fetch_failed:
