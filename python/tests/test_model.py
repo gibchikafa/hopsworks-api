@@ -513,16 +513,17 @@ class TestModelEngine:
     @pytest.mark.parametrize(
         "model_path,expected_hdfs_path",
         [
-            ("/hopsfs/Projects/demo/Models/model.pkl", "Projects/demo/Models/model.pkl"),
+            (
+                "/hopsfs/Projects/demo/Models/model.pkl",
+                "Projects/demo/Models/model.pkl",
+            ),
             (
                 "/mnt/hopsfs/Projects/demo/Models/model.pkl",
                 "/Projects/demo/Models/model.pkl",
             ),
         ],
     )
-    def test_normalize_hopsfs_mount_path(
-        self, mocker, model_path, expected_hdfs_path
-    ):
+    def test_normalize_hopsfs_mount_path(self, mocker, model_path, expected_hdfs_path):
         mocker.patch("hsml.engine.model_engine.model_api.ModelApi")
         mocker.patch("hsml.engine.model_engine.dataset_api.DatasetApi")
         mocker.patch("hsml.engine.model_engine.local_engine.LocalEngine")
@@ -543,7 +544,10 @@ class TestModelEngine:
     @pytest.mark.parametrize(
         "model_path,expected_hdfs_path",
         [
-            ("/hopsfs/Projects/demo/Models/model.pkl", "Projects/demo/Models/model.pkl"),
+            (
+                "/hopsfs/Projects/demo/Models/model.pkl",
+                "Projects/demo/Models/model.pkl",
+            ),
             (
                 "/mnt/hopsfs/Projects/demo/Models/model.pkl",
                 "/Projects/demo/Models/model.pkl",
@@ -578,9 +582,7 @@ class TestModelEngine:
         )
         upload_local.assert_not_called()
 
-    def test_save_model_from_local_or_hopsfs_mount_uses_local_upload(
-        self, mocker
-    ):
+    def test_save_model_from_local_or_hopsfs_mount_uses_local_upload(self, mocker):
         mocker.patch("hsml.engine.model_engine.model_api.ModelApi")
         mocker.patch("hsml.engine.model_engine.dataset_api.DatasetApi")
         mocker.patch("hsml.engine.model_engine.local_engine.LocalEngine")
