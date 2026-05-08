@@ -146,7 +146,9 @@ class ModelEngine:
 
     def _normalize_hopsfs_mount_path(self, model_path):
         if model_path.startswith(constants.MODEL_REGISTRY.HOPSFS_MOUNT_PREFIX):
-            return model_path.replace(constants.MODEL_REGISTRY.HOPSFS_MOUNT_PREFIX, "")
+            return model_path.replace(
+                constants.MODEL_REGISTRY.HOPSFS_MOUNT_PREFIX, "", 1
+            )
         if model_path.startswith(constants.MODEL_REGISTRY.HOPSFS_MOUNT_PREFIX_BASE):
             return model_path.replace(
                 constants.MODEL_REGISTRY.HOPSFS_MOUNT_PREFIX_BASE, "", 1

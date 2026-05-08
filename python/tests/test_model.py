@@ -545,6 +545,30 @@ class TestModelEngine:
         "model_path,expected_hdfs_path",
         [
             (
+                "/hopsfs/Projects/demo/hopsfs/archive/model.pkl",
+                "Projects/demo/hopsfs/archive/model.pkl",
+            ),
+            (
+                "/mnt/hopsfs/Projects/demo/mnt/hopsfs/archive/model.pkl",
+                "/Projects/demo/mnt/hopsfs/archive/model.pkl",
+            ),
+        ],
+    )
+    def test_normalize_hopsfs_mount_path_strips_only_leading_prefix(
+        self, mocker, model_path, expected_hdfs_path
+    ):
+        mocker.patch("hsml.engine.model_engine.model_api.ModelApi")
+        mocker.patch("hsml.engine.model_engine.dataset_api.DatasetApi")
+        mocker.patch("hsml.engine.model_engine.local_engine.LocalEngine")
+
+        engine = model_engine.ModelEngine()
+
+        assert engine._normalize_hopsfs_mount_path(model_path) == expected_hdfs_path
+
+    @pytest.mark.parametrize(
+        "model_path,expected_hdfs_path",
+        [
+            (
                 "/hopsfs/Projects/demo/Models/model.pkl",
                 "Projects/demo/Models/model.pkl",
             ),
