@@ -4,7 +4,7 @@
 
 | Name                                                                             |    Stmts |     Miss |   Cover |   Missing |
 |--------------------------------------------------------------------------------- | -------: | -------: | ------: | --------: |
-| python/hopsworks/\_\_init\_\_.py                                                 |      195 |       64 |     67% |160, 188, 192, 200, 225, 251-253, 280-285, 299, 329, 335, 345, 347-379, 389, 419-421, 457-474, 485-487, 491-493, 497, 501 |
+| python/hopsworks/\_\_init\_\_.py                                                 |      203 |       67 |     67% |161, 189, 193, 201, 226, 252-254, 281-286, 300, 330, 336, 346, 348-380, 391, 422-424, 467-484, 495-497, 508-510, 514-516, 520, 524 |
 | python/hopsworks/alert/\_\_init\_\_.py                                           |        6 |        6 |      0% |      5-10 |
 | python/hopsworks/alert\_receiver/\_\_init\_\_.py                                 |        6 |        6 |      0% |      5-10 |
 | python/hopsworks/app/\_\_init\_\_.py                                             |        2 |        2 |      0% |       5-6 |
@@ -21,6 +21,7 @@
 | python/hopsworks/core/alerts\_api/\_\_init\_\_.py                                |        2 |        2 |      0% |       5-6 |
 | python/hopsworks/core/app\_api/\_\_init\_\_.py                                   |        2 |        2 |      0% |       5-6 |
 | python/hopsworks/core/dataset\_api/\_\_init\_\_.py                               |        3 |        3 |      0% |       5-7 |
+| python/hopsworks/core/env\_var\_api/\_\_init\_\_.py                              |        2 |        0 |    100% |           |
 | python/hopsworks/core/environment\_api/\_\_init\_\_.py                           |        2 |        2 |      0% |       5-6 |
 | python/hopsworks/core/execution\_api/\_\_init\_\_.py                             |        2 |        2 |      0% |       5-6 |
 | python/hopsworks/core/flink\_cluster\_api/\_\_init\_\_.py                        |        2 |        2 |      0% |       5-6 |
@@ -52,6 +53,7 @@
 | python/hopsworks/engine/environment\_engine/\_\_init\_\_.py                      |        2 |        2 |      0% |       5-6 |
 | python/hopsworks/engine/execution\_engine/\_\_init\_\_.py                        |        2 |        2 |      0% |       5-6 |
 | python/hopsworks/engine/git\_engine/\_\_init\_\_.py                              |        2 |        2 |      0% |       5-6 |
+| python/hopsworks/env\_var/\_\_init\_\_.py                                        |        2 |        2 |      0% |       5-6 |
 | python/hopsworks/environment/\_\_init\_\_.py                                     |        2 |        2 |      0% |       5-6 |
 | python/hopsworks/execution/\_\_init\_\_.py                                       |        2 |        2 |      0% |       5-6 |
 | python/hopsworks/flink\_cluster/\_\_init\_\_.py                                  |        2 |        2 |      0% |       5-6 |
@@ -124,14 +126,15 @@
 | python/hopsworks\_common/client/istio/utils/numpy\_codec.py                      |       35 |       29 |     17% |24-39, 44-70 |
 | python/hopsworks\_common/client/online\_store\_rest\_client.py                   |      202 |       76 |     62% |52-58, 69-73, 75, 107, 111, 132-144, 159, 161, 165, 168, 174, 182, 185, 190-193, 196-200, 203, 229, 238, 253, 258-261, 283, 291, 296, 301, 307, 319-331, 339, 346, 355, 361, 371, 376-377, 388-401, 406, 414, 419, 427 |
 | python/hopsworks\_common/command.py                                              |       25 |       14 |     44% |38-45, 49-52, 56, 60 |
-| python/hopsworks\_common/connection.py                                           |      242 |      100 |     59% |178-180, 224, 253, 266-277, 287, 300, 309-324, 343-416, 465-476, 554, 568, 573, 577, 582, 586, 591, 595, 600, 604, 609, 618, 622, 626, 631, 640-643, 648, 653, 656-657, 660 |
-| python/hopsworks\_common/constants.py                                            |      178 |        2 |     99% |    25, 28 |
+| python/hopsworks\_common/connection.py                                           |      242 |      100 |     59% |178-180, 224, 256, 271-282, 292, 305, 314-329, 348-421, 470-481, 559, 573, 578, 582, 587, 591, 596, 600, 605, 609, 614, 623, 627, 631, 636, 645-648, 653, 658, 661-662, 665 |
+| python/hopsworks\_common/constants.py                                            |      179 |        2 |     99% |    25, 28 |
 | python/hopsworks\_common/core/\_\_init\_\_.py                                    |        0 |        0 |    100% |           |
 | python/hopsworks\_common/core/alerts\_api.py                                     |      262 |      170 |     35% |130-133, 165-168, 197-200, 231-241, 275-286, 325-337, 373-386, 427-441, 483-515, 559-592, 638-663, 704-728, 756-760, 794-799, 842-907, 931-935, 978-1010, 1043-1047, 1059-1062, 1070-1115, 1127-1131, 1134-1147 |
 | python/hopsworks\_common/core/app\_api.py                                        |       59 |       32 |     46% |44-50, 66-72, 112-137, 141-150, 154-165, 187-194 |
 | python/hopsworks\_common/core/constants.py                                       |       24 |        0 |    100% |           |
 | python/hopsworks\_common/core/dataset.py                                         |       31 |       14 |     55% |33-37, 41-44, 48, 52, 56, 60, 64 |
 | python/hopsworks\_common/core/dataset\_api.py                                    |      329 |      223 |     32% |106-168, 217-288, 300-366, 388, 405-408, 411, 422-426, 455, 470-471, 484, 497-499, 512, 538-547, 575-593, 619-637, 655-678, 710-729, 750-767, 783-798, 814-818, 847-899, 918, 942, 965-977, 990-1000, 1016-1032 |
+| python/hopsworks\_common/core/env\_var\_api.py                                   |       50 |        0 |    100% |           |
 | python/hopsworks\_common/core/environment\_api.py                                |       41 |       22 |     46% |63-86, 108-113, 146-151, 163-173 |
 | python/hopsworks\_common/core/execution\_api.py                                  |       53 |       18 |     66% |65, 89-100, 105-111, 119-128, 131-141, 153-155 |
 | python/hopsworks\_common/core/flink\_cluster\_api.py                             |       93 |       63 |     32% |43, 76-88, 91-107, 136-147, 176-179, 208-211, 237-240, 268-277, 306-312, 338-357, 393-422, 464-476 |
@@ -149,7 +152,7 @@
 | python/hopsworks\_common/core/library\_api.py                                    |       10 |        4 |     60% |     41-54 |
 | python/hopsworks\_common/core/opensearch.py                                      |      240 |       75 |     69% |44, 52-98, 126, 161, 194, 205-208, 212-218, 223-230, 286-288, 297, 374-409, 452-455, 460-472, 513 |
 | python/hopsworks\_common/core/opensearch\_api.py                                 |       54 |       15 |     72% |62-73, 86-87, 113-114, 135-140 |
-| python/hopsworks\_common/core/project\_api.py                                    |       56 |       41 |     27% |39-43, 54-64, 75-79, 90-94, 108-115, 133-156, 159-165, 168-171 |
+| python/hopsworks\_common/core/project\_api.py                                    |       58 |       32 |     45% |39-43, 54-64, 75-79, 90-94, 108-115, 167-173, 176-179 |
 | python/hopsworks\_common/core/rest\_endpoint.py                                  |      234 |       59 |     75% |48-51, 60, 63, 68, 100, 104-107, 113, 122, 128, 139, 142-144, 150, 155, 165, 180-181, 184, 199-201, 204, 269-275, 278, 303-308, 311, 323, 331, 364, 380, 383, 408-411, 416, 427-431, 438, 448 |
 | python/hopsworks\_common/core/search\_api.py                                     |      133 |       82 |     38% |45-47, 53, 59, 65, 69, 72, 84-103, 110, 115, 119, 122, 134-138, 237, 299-308, 362-371, 425-434, 485-494, 510-525, 543-562, 576-624 |
 | python/hopsworks\_common/core/secret\_api.py                                     |       51 |       31 |     39% |48-53, 74-90, 110-116, 145-169, 177-183 |
@@ -160,12 +163,13 @@
 | python/hopsworks\_common/core/trino\_api.py                                      |       95 |        1 |     99% |       219 |
 | python/hopsworks\_common/core/type\_systems.py                                   |      254 |       56 |     78% |329, 369-391, 399-401, 407-429, 465, 486, 490-514, 521 |
 | python/hopsworks\_common/core/variable\_api.py                                   |       50 |       26 |     48% |74-82, 96-101, 112, 150-159, 169-170, 178-182 |
-| python/hopsworks\_common/decorators.py                                           |       87 |        6 |     93% |93, 129, 155, 165, 175, 185 |
+| python/hopsworks\_common/decorators.py                                           |       87 |        5 |     94% |129, 155, 165, 175, 185 |
 | python/hopsworks\_common/engine/\_\_init\_\_.py                                  |        0 |        0 |    100% |           |
 | python/hopsworks\_common/engine/alerts\_engine.py                                |       64 |        2 |     97% |   45, 101 |
 | python/hopsworks\_common/engine/environment\_engine.py                           |       38 |       27 |     29% |27-31, 34-38, 41-45, 48-74, 77-90 |
 | python/hopsworks\_common/engine/execution\_engine.py                             |      108 |       62 |     43% |57-80, 83-102, 119-144, 168, 181-195, 205-211, 218, 238 |
 | python/hopsworks\_common/engine/git\_engine.py                                   |       21 |        8 |     62% |     49-62 |
+| python/hopsworks\_common/env\_var.py                                             |       50 |        7 |     86% |73, 79, 87, 98, 106, 109, 117 |
 | python/hopsworks\_common/environment.py                                          |       65 |       36 |     45% |46-59, 63-66, 71, 76, 81, 112-128, 159-175, 188, 191 |
 | python/hopsworks\_common/execution.py                                            |      140 |       23 |     84% |74, 80-82, 94, 124, 142, 148, 154, 160, 166, 172, 188, 193, 240, 253, 266, 285, 288, 291, 296-304 |
 | python/hopsworks\_common/flink\_cluster.py                                       |      121 |       66 |     45% |36-41, 44-62, 65-71, 96-122, 147, 178, 207, 234, 262, 305, 350, 375-378, 386, 392, 398, 404, 410, 416-419, 424-426 |
@@ -363,7 +367,7 @@
 | python/hsml/deployment.py                                                        |      302 |       55 |     82% |257, 379, 400-406, 409, 412, 430, 436, 446, 452, 462, 468, 476, 480, 486, 490, 496, 500, 510, 514, 520, 530, 536, 540, 546, 550, 556, 560, 570, 574, 580, 584, 590, 594, 600, 604, 610, 614, 620, 624, 630, 636, 642, 646, 652, 656, 672, 676, 682, 686, 692, 696, 699-704 |
 | python/hsml/engine/\_\_init\_\_.py                                               |        0 |        0 |    100% |           |
 | python/hsml/engine/local\_engine.py                                              |       45 |       26 |     42% |34-35, 38, 41-58, 75-94, 97-99, 102-104, 107, 110-113 |
-| python/hsml/engine/model\_engine.py                                              |      266 |      227 |     15% |45-65, 68-88, 94-98, 109-145, 156-185, 191-198, 208-240, 252-262, 273-357, 360, 370-493, 496-530, 533-550, 553-567, 570, 580, 589, 598, 606, 623, 640 |
+| python/hsml/engine/model\_engine.py                                              |      273 |      224 |     18% |45-65, 68-88, 94-98, 109-145, 167-196, 202-209, 219-251, 283-367, 370, 380-503, 506-540, 543-560, 563-577, 580, 590, 599, 608, 616, 633, 650 |
 | python/hsml/engine/serving\_engine.py                                            |      357 |      313 |     12% |61-98, 101-153, 156-194, 197-236, 239-259, 262-293, 296-299, 306-311, 314-315, 326-355, 361-368, 371-426, 429-456, 459-504, 507-513, 516-530, 533-540, 543-568, 579-611, 621-629, 638-689, 701-722, 737-741, 746-778 |
 | python/hsml/inference\_batcher.py                                                |       77 |       13 |     83% |52, 83-85, 88, 93, 95, 97, 108, 118, 128, 138, 141 |
 | python/hsml/inference\_endpoint.py                                               |       84 |        7 |     92% |54, 67, 109-111, 133, 155 |
@@ -410,7 +414,7 @@
 | python/hsml/utils/schema/tensor.py                                               |        8 |        0 |    100% |           |
 | python/hsml/utils/schema/tensor\_schema.py                                       |       34 |        0 |    100% |           |
 | python/hsml/version.py                                                           |        2 |        2 |      0% |     17-22 |
-| **TOTAL**                                                                        | **29871** | **10734** | **64%** |           |
+| **TOTAL**                                                                        | **29993** | **10733** | **64%** |           |
 
 
 ## Setup coverage badge
