@@ -101,9 +101,9 @@ class App:
 
     @classmethod
     def from_response_json_list(cls, json_list):
-        if json_list and isinstance(json_list, dict):
+        if isinstance(json_list, dict):
             json_decamelized = humps.decamelize(json_list)
-            json_list = json_decamelized.get("items")
+            json_list = json_decamelized.get("items") or []
         if json_list and isinstance(json_list, list):
             return [cls.from_response_json(item) for item in json_list]
         return []
