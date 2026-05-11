@@ -26,7 +26,9 @@ class TestSinkJobConfiguration:
         assert config.to_dict() == {
             "type": sink_job_configuration.SinkJobConfiguration.DTO_TYPE,
             "name": None,
-            "environmentName": "dlthub-ingestion-pipeline",
+            "environmentName": (
+                sink_job_configuration.SinkJobConfiguration.DEFAULT_ENVIRONMENT_NAME
+            ),
             "transformScriptPath": None,
             "writeMode": sink_job_configuration.WriteMode.APPEND.value,
             "batchSize": 100000,
@@ -193,6 +195,14 @@ class TestSinkJobConfiguration:
             "skipToDate": None,
             "maxCatchupRuns": None,
         }
+
+    def test_from_response_json_uses_default_environment_name(self):
+        config = sink_job_configuration.SinkJobConfiguration.from_response_json({})
+
+        assert (
+            config.environment_name
+            == sink_job_configuration.SinkJobConfiguration.DEFAULT_ENVIRONMENT_NAME
+        )
 
     def test_column_mappings_are_sanitized_from_dicts(self):
         config = sink_job_configuration.SinkJobConfiguration(

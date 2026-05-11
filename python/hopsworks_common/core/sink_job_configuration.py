@@ -250,11 +250,12 @@ class LoadingConfig:
 @public("hopsworks.core.SinkJobConfiguration")
 class SinkJobConfiguration:
     DTO_TYPE = "ingestionJobConfiguration"
+    DEFAULT_ENVIRONMENT_NAME = "dlthub-ingestion-pipeline"
 
     def __init__(
         self,
         name: str | None = None,
-        environment_name: str | None = "dlthub-ingestion-pipeline",
+        environment_name: str | None = DEFAULT_ENVIRONMENT_NAME,
         transform_script_path: str | None = None,
         write_mode: WriteMode | str | None = WriteMode.APPEND,
         batch_size: int | None = 100000,
@@ -390,7 +391,7 @@ class SinkJobConfiguration:
         endpoint_config = json_dict.get("endpointConfig", None)
         return SinkJobConfiguration(
             environment_name=json_decamelized.get(
-                "environment_name", "dlthub-ingestion-pipeline"
+                "environment_name", cls.DEFAULT_ENVIRONMENT_NAME
             ),
             transform_script_path=json_decamelized.get("transform_script_path"),
             write_mode=json_decamelized.get("write_mode", WriteMode.APPEND.value),
