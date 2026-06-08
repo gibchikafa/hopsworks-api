@@ -869,6 +869,7 @@ class TestFeatureGroup:
             validation_options={"save_report": True},
             transformation_context=None,
             transform=True,
+            n_processes=None,
         )
         mock_commit_details.assert_called_once()
         mock_stats_engine.assert_called_once()
@@ -919,6 +920,7 @@ class TestFeatureGroup:
             validation_options={"save_report": False},
             transformation_context=None,
             transform=True,
+            n_processes=None,
         )
         mock_commit_details.assert_called_once()
         mock_stats_engine.assert_called_once()
@@ -1336,10 +1338,11 @@ class TestExternalFeatureGroup:
             == "Updated expectation suite attached to Feature Group, edit it at"
         )
 
-    def test_from_response_json_transformation_functions(self, backend_fixtures):
+    def test_from_response_json_transformation_functions(
+        self, backend_fixtures, mocker
+    ):
         # Arrange
         json = backend_fixtures["feature_group"]["get_transformations"]["response"]
-
         # Act
         fg = feature_group.FeatureGroup.from_response_json(json)
 
@@ -1539,11 +1542,12 @@ class TestFeatureGroupExecuteOdts:
         result_df = fg.execute_odts(data=df_test_data, online=False)
 
         mock_apply.assert_called_with(
-            transformation_functions=fg.transformation_functions,
+            execution_graph=fg._transformation_function_execution_dag,
             data=df_test_data,
             online=False,
             transformation_context=None,
             request_parameters=None,
+            n_processes=None,
         )
         pd.testing.assert_frame_equal(result_df, df_test_data)
 
@@ -1552,11 +1556,12 @@ class TestFeatureGroupExecuteOdts:
         result_dict = fg.execute_odts(data=dict_test_data, online=True)
 
         mock_apply.assert_called_with(
-            transformation_functions=fg.transformation_functions,
+            execution_graph=fg._transformation_function_execution_dag,
             data=dict_test_data,
             online=True,
             transformation_context=None,
             request_parameters=None,
+            n_processes=None,
         )
         assert result_dict == dict_test_data
 
@@ -1609,11 +1614,12 @@ class TestFeatureGroupExecuteOdts:
         )
 
         mock_apply.assert_called_with(
-            transformation_functions=fg.transformation_functions,
+            execution_graph=fg._transformation_function_execution_dag,
             data=df_test_data,
             online=False,
             transformation_context=context,
             request_parameters=None,
+            n_processes=None,
         )
         pd.testing.assert_frame_equal(result_df, df_test_data)
 
@@ -1624,11 +1630,12 @@ class TestFeatureGroupExecuteOdts:
         )
 
         mock_apply.assert_called_with(
-            transformation_functions=fg.transformation_functions,
+            execution_graph=fg._transformation_function_execution_dag,
             data=dict_test_data,
             online=True,
             transformation_context=None,
             request_parameters=request_params,
+            n_processes=None,
         )
         assert result_dict == dict_test_data
 
@@ -1720,11 +1727,12 @@ class TestFeatureGroupExecuteOdts:
 
         # Assert - online
         mock_apply.assert_called_with(
-            transformation_functions=fg.transformation_functions,
+            execution_graph=fg._transformation_function_execution_dag,
             data=online_test_data,
             online=True,
             transformation_context=None,
             request_parameters=None,
+            n_processes=None,
         )
 
         # Act - offline
@@ -1732,11 +1740,12 @@ class TestFeatureGroupExecuteOdts:
 
         # Assert - offline
         mock_apply.assert_called_with(
-            transformation_functions=fg.transformation_functions,
+            execution_graph=fg._transformation_function_execution_dag,
             data=offline_test_data,
             online=False,
             transformation_context=None,
             request_parameters=None,
+            n_processes=None,
         )
 
 
@@ -1908,3 +1917,64 @@ class TestExternalFeatureGroupRead:
 
         fake_query.filter.assert_not_called()
         fake_query.read.assert_called_once()
+
+
+class TestFeatureGroupVisualize:
+    def test_visualize_transformations(self, mocker):
+        mocker.patch("hopsworks_common.client.get_instance")
+        mocker.patch("hsfs.engine.get_type", return_value="python")
+        mocker.patch("hsfs.engine.get_instance")
+        mocker.patch("hsfs.core.feature_group_engine.FeatureGroupEngine")
+
+        from hsfs import transformation_function
+        from hsfs.hopsworks_udf import udf
+
+        @udf(int)
+        def add_one(col1):
+            return col1 + 1
+
+        tf1 = transformation_function.TransformationFunction(
+            99,
+            hopsworks_udf=add_one,
+            transformation_type=TransformationType.ON_DEMAND,
+        )
+
+        fg = feature_group.FeatureGroup(
+            name="test_fg",
+            version=1,
+            featurestore_id=99,
+            primary_key=[],
+            partition_key=[],
+            features=[],
+            id=10,
+            stream=False,
+            transformation_functions=[tf1],
+        )
+
+        # visualize() returns None, so verify via _to_graphviz on the DAG
+        dot = fg._transformation_function_execution_dag._to_graphviz()
+        assert "add_one" in dot.source
+        assert "Input Features" in dot.source
+        assert "Output Features" in dot.source
+        # Also verify visualize_transformations doesn't raise
+        fg.visualize_transformations(mode="text")
+
+    def test_visualize_transformations_no_tfs(self, mocker):
+        mocker.patch("hopsworks_common.client.get_instance")
+        mocker.patch("hsfs.engine.get_type", return_value="python")
+        mocker.patch("hsfs.engine.get_instance")
+        mocker.patch("hsfs.core.feature_group_engine.FeatureGroupEngine")
+
+        fg = feature_group.FeatureGroup(
+            name="test_fg",
+            version=1,
+            featurestore_id=99,
+            primary_key=[],
+            partition_key=[],
+            features=[],
+            id=10,
+            stream=False,
+        )
+
+        with pytest.raises(FeatureStoreException, match="No transformation functions"):
+            fg.visualize_transformations()
