@@ -29,7 +29,9 @@ class DeploymentTracingConfig:
     Parameters:
         enabled: Whether tracing is enabled.
         otel_tracing_storage: Where traces are stored. Allowed values are
-            ``online``, ``offline`` and ``both``. Defaults to ``online``.
+            ``online`` and ``both``; defaults to ``online``. ``offline`` is
+            retired and is treated as ``both``, since the online store backs
+            every interactive read.
         input_token_price_per_million_tokens: Optional input token price used to
             compute trace cost metrics.
         output_token_price_per_million_tokens: Optional output token price used to
@@ -39,7 +41,12 @@ class DeploymentTracingConfig:
     STORAGE_ONLINE = "online"
     STORAGE_OFFLINE = "offline"
     STORAGE_BOTH = "both"
-    VALID_STORAGES = (STORAGE_ONLINE, STORAGE_OFFLINE, STORAGE_BOTH)
+    VALID_STORAGES = (STORAGE_ONLINE, STORAGE_BOTH)
+    # Retired rather than rejected. The online store backs every interactive
+    # read -- the Traces UI, evaluation readiness, looking a trace up to attach
+    # feedback to it -- so skipping it left a deployment with no working trace
+    # view at all. Scripts still passing it get what they were reaching for.
+    RETIRED_STORAGES = {STORAGE_OFFLINE: STORAGE_BOTH}
 
     def __init__(
         self,
@@ -69,6 +76,8 @@ class DeploymentTracingConfig:
     def _validate_otel_tracing_storage(cls, otel_tracing_storage: str | None):
         if otel_tracing_storage is None:
             return cls.STORAGE_ONLINE
+        if otel_tracing_storage in cls.RETIRED_STORAGES:
+            return cls.RETIRED_STORAGES[otel_tracing_storage]
         if otel_tracing_storage not in cls.VALID_STORAGES:
             raise ValueError(
                 "Tracing storage '{}' is not valid. Possible values are '{}'".format(
