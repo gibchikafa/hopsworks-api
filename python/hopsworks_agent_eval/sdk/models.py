@@ -358,6 +358,25 @@ class GateResult(ApiModel):
 
 
 @dataclass
+class ToolEvent(ApiModel):
+    """A step the agent reported while answering: a tool call, a retrieval, a code run."""
+
+    id: str | None = None
+    name: str = ""
+    status: str = "running"
+    message: str | None = None
+    data: Any = None
+
+    @property
+    def done(self) -> bool:
+        return self.status in ("done", "failed")
+
+    @property
+    def failed(self) -> bool:
+        return self.status == "failed"
+
+
+@dataclass
 class ChatReply(ApiModel):
     """The agent's answer to one `Agent.chat()` message, in the agent protocol's shape."""
 
@@ -392,6 +411,11 @@ class ChatReply(ApiModel):
     @property
     def failed(self) -> bool:
         return self.status == "failed"
+
+    @property
+    def tool_events(self) -> list[ToolEvent]:
+        """The steps the agent reported for this turn, as its metadata carries them."""
+        return ToolEvent.list_from_api(self.metadata.get("tool_events") or [])
 
 
 @dataclass

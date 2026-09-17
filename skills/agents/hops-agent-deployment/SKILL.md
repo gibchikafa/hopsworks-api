@@ -97,6 +97,8 @@ agent = agents.get_agent("my_agent")          # by name or deployment id
 
 reply = agent.chat("hello")                   # ChatReply: .text, .conversation_id, .trace_id
 agent.chat("and then?", conversation_id=reply.conversation_id)
+for delta in agent.chat_stream("tell me more"):   # streamed; .reply / .tool_events afterwards
+    print(delta, end="")
 agent.give_feedback(reply.trace_id, "positive")
 
 for trace in agent.traces(limit=5):

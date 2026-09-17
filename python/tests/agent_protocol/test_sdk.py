@@ -10,6 +10,7 @@ from hopsworks_agent_eval.sdk import (
     Agent,
     AgentServing,
     AgentServingError,
+    ChatStream,
     Cluster,
     Suite,
     Task,
@@ -19,13 +20,17 @@ from hopsworks_agent_eval.sdk.models import as_datetime
 
 
 class Reply:
-    def __init__(self, body=None, status=200):
+    def __init__(self, body=None, status=200, lines=None):
         self._body = body
+        self._lines = lines
         self.status_code = status
-        self.content = b"" if body is None else b"x"
+        self.content = b"" if body is None and lines is None else b"x"
 
     def json(self):
         return self._body
+
+    def iter_lines(self, decode_unicode=False):
+        return iter(self._lines or [])
 
 
 class FakeSession:
@@ -33,7 +38,17 @@ class FakeSession:
         self.replies = list(replies)
         self.sent: list[tuple[str, str, dict | None, object]] = []
 
-    def request(self, method, url, params=None, json=None, headers=None, timeout=None):
+    def request(
+        self,
+        method,
+        url,
+        params=None,
+        json=None,
+        headers=None,
+        timeout=None,
+        stream=False,
+    ):
+        self.streamed = stream
         self.sent.append(
             (
                 method,
@@ -845,6 +860,160 @@ class TestAgents:
         bare = Agent(evals, 7)
         assert bare.name == "support"
         assert session.sent[0][:2] == ("GET", "/serving/7")
+
+
+def sse(*frames):
+    """Lines of a server-sent event stream, one (event, data) per frame."""
+    lines = []
+    for event, data in frames:
+        lines += [f"event: {event}", f"data: {json.dumps(data)}", ""]
+    return lines
+
+
+MANIFEST = Reply({"endpoints": {"chat": "/v1/chat", "stream": "/v1/chat/stream"}})
+
+
+class TestChatStream:
+    def test_the_stream_yields_text_and_keeps_tools_and_the_completed_reply(self):
+        _, agent7, session = agent(
+            MANIFEST,
+            Reply(
+                lines=sse(
+                    ("tool_event", {"id": "t1", "name": "lookup", "status": "running"}),
+                    ("message.delta", {"delta": {"text": "Order 42 "}}),
+                    ("tool_event", {"id": "t1", "name": "lookup", "status": "done"}),
+                    ("message.delta", {"delta": {"text": "shipped."}}),
+                    (
+                        "message.completed",
+                        {
+                            "conversation_id": "conv-1",
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "Order 42 shipped."}
+                                ]
+                            },
+                            "metadata": {"trace_id": "abc"},
+                        },
+                    ),
+                )
+            ),
+        )
+        stream = agent7.chat_stream("Where is order 42?", subject="alice")
+        assert isinstance(stream, ChatStream)
+        method, url, _, body = session.sent[1]
+        assert (method, url) == ("POST", "https://gw/v1/g1/support/v1/chat/stream")
+        assert body["subject"] == "alice" and session.streamed is True
+
+        assert list(stream) == ["Order 42 ", "shipped."]
+        assert stream.text == "Order 42 shipped."
+        assert [(t.name, t.status) for t in stream.tool_events] == [
+            ("lookup", "running"),
+            ("lookup", "done"),
+        ]
+        assert stream.reply.conversation_id == "conv-1"
+        assert (
+            stream.reply.trace_id == "abc" and stream.reply.text == "Order 42 shipped."
+        )
+
+    def test_events_give_every_frame_in_order(self):
+        _, agent7, _ = agent(
+            MANIFEST,
+            Reply(
+                lines=sse(
+                    ("message.delta", {"delta": {"text": "a"}}),
+                    (
+                        "tool_event",
+                        {"name": "search", "status": "done", "data": {"n": 2}},
+                    ),
+                    (
+                        "message.completed",
+                        {"conversation_id": "c", "message": {"content": []}},
+                    ),
+                )
+            ),
+        )
+        frames = list(agent7.chat_stream("x").events())
+        assert [f.type for f in frames] == ["delta", "tool", "completed"]
+        assert frames[0].text == "a"
+        assert frames[1].tool.name == "search" and frames[1].tool.data == {"n": 2}
+        assert frames[2].reply.conversation_id == "c"
+
+    def test_reply_reads_the_rest_of_the_stream_and_is_made_from_text_without_a_completed_frame(
+        self,
+    ):
+        _, agent7, _ = agent(
+            MANIFEST,
+            Reply(
+                lines=sse(
+                    ("message.delta", {"delta": {"text": "hel"}}),
+                    ("message.delta", {"delta": {"text": "lo"}}),
+                )
+            ),
+        )
+        stream = agent7.chat_stream("x")
+        assert stream.reply.text == "hello"
+        assert stream.reply.conversation_id == "" and stream.reply.trace_id is None
+        assert list(stream) == []  # read once
+
+    def test_an_error_frame_raises_with_the_agents_message(self):
+        _, agent7, _ = agent(
+            MANIFEST,
+            Reply(
+                lines=sse(
+                    ("message.delta", {"delta": {"text": "so far"}}),
+                    (
+                        "error",
+                        {"code": "tool_failed", "message": "the database is down"},
+                    ),
+                )
+            ),
+        )
+        stream = agent7.chat_stream("x")
+        with pytest.raises(AgentServingError, match="the database is down"):
+            list(stream)
+        assert stream.text == "so far"
+
+    def test_multi_line_data_comments_and_crlf_are_parsed(self):
+        _, agent7, _ = agent(
+            MANIFEST,
+            Reply(
+                lines=[
+                    ": keep-alive\r",
+                    "event: message.delta\r",
+                    'data: {"delta":\r',
+                    'data: {"text": "ok"}}\r',
+                    "\r",
+                    b"event: message.completed",
+                    b'data: {"conversation_id": "c", "message": {"content": []}}',
+                ]
+            ),
+        )
+        stream = agent7.chat_stream("x")
+        assert list(stream) == ["ok"] and stream.reply.conversation_id == "c"
+
+    def test_the_stream_route_falls_back_to_the_default_without_a_manifest(self):
+        _, agent7, session = agent(
+            Reply({"errorMsg": "Not Found"}, status=404),
+            Reply(lines=sse(("message.delta", {"delta": {"text": "hi"}}))),
+        )
+        assert list(agent7.chat_stream("x")) == ["hi"]
+        assert session.sent[1][1] == "https://gw/v1/g1/support/v1/chat/stream"
+
+    def test_a_completed_reply_carries_the_agents_tool_events(self):
+        _, agent7, _ = agent(
+            MANIFEST,
+            Reply(
+                {
+                    "conversation_id": "c",
+                    "message": {"content": []},
+                    "metadata": {
+                        "tool_events": [{"name": "lookup", "status": "failed"}]
+                    },
+                }
+            ),
+        )
+        [tool] = agent7.chat("x").tool_events
+        assert tool.name == "lookup" and tool.failed
 
 
 class TestModels:

@@ -124,6 +124,7 @@ class Transport:
         json: Any = None,
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
+        stream: bool = False,
     ) -> Any:
         """Send a request to an agent at ``gateway_url/<segments>``.
 
@@ -131,18 +132,26 @@ class Transport:
         gateway of their own: it carries the credential the gateway accepts and
         the cluster's certificates. Otherwise through this transport's session,
         whose credential the gateway accepts as well.
+
+        With ``stream`` the body is not read: the response's lines come back as
+        an iterator of text, for server-sent events.
         """
         timeout = TIMEOUT_S if timeout is None else timeout
         if self._gateway_url is None:
             istio = _istio_client()
             if istio is not None:
-                return _through_istio(istio, method, segments, json, headers, timeout)
+                response = _through_istio(
+                    istio, method, segments, json, headers, timeout, stream
+                )
+                return response.iter_lines(decode_unicode=True) if stream else response
         url = self.gateway_url + "/" + "/".join(segments)
         response = self._session.request(
-            method, url, json=json, headers=headers, timeout=timeout
+            method, url, json=json, headers=headers, timeout=timeout, stream=stream
         )
         if response.status_code >= 400:
             raise AgentServingError(_message(response), response.status_code)
+        if stream:
+            return response.iter_lines(decode_unicode=True)
         if not getattr(response, "content", b""):
             return None
         return response.json()
@@ -188,6 +197,7 @@ class HopsworksClientSession:
         json: Any = None,
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
+        stream: bool = False,
     ) -> Any:
         import json as json_module  # noqa: PLC0415
 
@@ -207,10 +217,13 @@ class HopsworksClientSession:
                 query_params=params,
                 headers=sent or None,
                 data=None if json is None else json_module.dumps(json),
+                stream=stream,
                 timeout=timeout,
             )
         except RestAPIError as err:
             return _ClientResponse(err.response.status_code, _error_body(err))
+        if stream:
+            return body  # the response itself, as the client returns it when streaming
         return _ClientResponse(200, body)
 
 
@@ -269,6 +282,7 @@ def _through_istio(
     json: Any,
     headers: dict[str, str] | None,
     timeout: float,
+    stream: bool = False,
 ) -> Any:
     import json as json_module  # noqa: PLC0415
 
@@ -285,6 +299,7 @@ def _through_istio(
             data=None if json is None else json_module.dumps(json),
             with_base_path_params=False,
             timeout=timeout,
+            stream=stream,
         )
     except RestAPIError as err:
         response = err.response

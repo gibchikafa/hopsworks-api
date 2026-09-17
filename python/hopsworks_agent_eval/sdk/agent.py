@@ -8,6 +8,8 @@ agent handle. The handle is fetched through :meth:`AgentServing.get_agent`.
 from __future__ import annotations
 
 import contextlib
+import json
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from hopsworks_apigen import public
@@ -25,6 +27,7 @@ from .models import (
     LlmMetric,
     RegressionSuite,
     Run,
+    ToolEvent,
     ToolMetric,
     Trace,
     TraceMetric,
@@ -34,13 +37,15 @@ from .models import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Iterator, Sequence
 
     from .client import AgentServing
     from .models import EvalJob, ReviewJob, Task
 
 VERDICTS = ("positive", "negative", "false_alarm")
 MANIFEST_PATH = ".well-known/hopsworks-agent.json"
+DEFAULT_CHAT_PATH = "/v1/chat"
+DEFAULT_STREAM_PATH = "/v1/chat/stream"
 
 
 def is_agent(serving: dict[str, Any]) -> bool:
@@ -69,7 +74,7 @@ class Agent:
         self.id = int(deployment_id)
         self._serving = dict(serving or {})
         self._otel = f"/otel/servings/{self.id}"
-        self._chat_path: str | None = None
+        self._endpoints: dict[str, str] | None = None
         self._deployment: Any = None
 
     def __repr__(self) -> str:
@@ -115,7 +120,7 @@ class Agent:
     def manifest(self) -> dict[str, Any]:
         """The agent's self-description: its protocol version, endpoints and capabilities."""
         manifest = self._agent_get(MANIFEST_PATH) or {}
-        self._chat_path = (manifest.get("endpoints") or {}).get("chat")
+        self._endpoints = dict(manifest.get("endpoints") or {})
         return manifest
 
     @public
@@ -152,33 +157,79 @@ class Agent:
         Raises:
             `AgentServingError`: If the agent or the gateway refuses the request.
         """
-        payload: dict[str, Any] = {
-            "message": {"role": "user", "content": [{"type": "text", "text": text}]}
-        }
-        if conversation_id:
-            payload["conversation_id"] = conversation_id
-        if subject:
-            payload["subject"] = subject
-        if context:
-            payload["context"] = context
-        if metadata:
-            payload["metadata"] = metadata
+        payload = _chat_payload(text, conversation_id, subject, context, metadata)
         body = self._http.agent_request(
             "POST",
-            self._segments(self._resolve_chat_path()),
+            self._segments(self._endpoint("chat", DEFAULT_CHAT_PATH)),
             json=payload,
             timeout=timeout,
         )
         return ChatReply.from_api(body)
 
-    def _resolve_chat_path(self) -> str:
-        if self._chat_path is None:
+    @public
+    def chat_stream(
+        self,
+        text: str,
+        *,
+        conversation_id: str | None = None,
+        subject: str | None = None,
+        context: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        timeout: float = 120.0,
+    ) -> ChatStream:
+        """Send the agent one message and read its reply as it is produced.
+
+        The stream is the protocol's server-sent events: text deltas, the steps
+        the agent reports while working (tool calls, retrievals, code runs) and
+        the completed reply. Iterating the stream yields the text deltas;
+        `events()` yields every frame; `reply` is the completed `ChatReply`,
+        reading the rest of the stream first if needed.
+
+        Example:
+            ```python
+            stream = agent.chat_stream("Where is order 42?")
+            for delta in stream:
+                print(delta, end="", flush=True)
+            print(stream.reply.trace_id)
+
+            for frame in agent.chat_stream("Cancel it").events():
+                if frame.tool:
+                    print(frame.tool.name, frame.tool.status)
+            ```
+
+        Parameters:
+            text: The user's message.
+            conversation_id: Thread this message onto an earlier reply's conversation.
+            subject: Who the end user is, for agents that keep per-user memory.
+            context: Extra request context the agent reads.
+            metadata: Extra request metadata the agent reads.
+            timeout: Seconds to wait for each piece of the reply.
+
+        Returns:
+            `ChatStream`: the reply as it arrives.
+
+        Raises:
+            `AgentServingError`: If the gateway refuses the request, or, while reading, if the agent reports an error.
+        """
+        payload = _chat_payload(text, conversation_id, subject, context, metadata)
+        lines = self._http.agent_request(
+            "POST",
+            self._segments(self._endpoint("stream", DEFAULT_STREAM_PATH)),
+            json=payload,
+            timeout=timeout,
+            stream=True,
+        )
+        return ChatStream(lines)
+
+    def _endpoint(self, name: str, default: str) -> str:
+        """The agent's route for ``name``, from its manifest; the protocol's default without one."""
+        if self._endpoints is None:
             # not a protocol agent, or the manifest is not served: the
-            # protocol's default route is the best guess there is
+            # protocol's default routes are the best guess there is
             with contextlib.suppress(AgentServingError):
                 self.manifest()
-            self._chat_path = self._chat_path or "/v1/chat"
-        return self._chat_path
+            self._endpoints = dict(self._endpoints or {})
+        return str(self._endpoints.get(name) or default)
 
     def _agent_get(self, path: str) -> Any:
         return self._http.agent_request("GET", self._segments(path))
@@ -563,3 +614,153 @@ class Agent:
         """Run the failure analysis now; the job is created with defaults if the deployment has none."""
         job = self.review_job() or self._client.jobs.ensure_review_job(self.id)
         return self._client.jobs.analyse(job, **kwargs)
+
+
+def _chat_payload(
+    text: str,
+    conversation_id: str | None,
+    subject: str | None,
+    context: dict[str, Any] | None,
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "message": {"role": "user", "content": [{"type": "text", "text": text}]}
+    }
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
+    if subject:
+        payload["subject"] = subject
+    if context:
+        payload["context"] = context
+    if metadata:
+        payload["metadata"] = metadata
+    return payload
+
+
+# ── streaming ──────────────────────────────────────────────────────────────
+
+
+@dataclass
+class StreamFrame:
+    """One server-sent event of a streamed reply.
+
+    ``type`` is ``delta`` (a piece of text, in ``text``), ``tool`` (a step the
+    agent reported, in ``tool``) or ``completed`` (the whole reply, in ``reply``).
+    """
+
+    type: str
+    text: str = ""
+    tool: ToolEvent | None = None
+    reply: ChatReply | None = None
+    raw: Any = field(default=None, repr=False)
+
+
+@public
+class ChatStream:
+    """A reply as the agent produces it.
+
+    Iterate it for the text deltas; `events()` for every frame; `reply` for the
+    completed `ChatReply`. Whichever is used, the stream is read once.
+    """
+
+    def __init__(self, lines: Iterable[str]):
+        self._frames = self._parse(lines)
+        self._chunks: list[str] = []
+        self._tool_events: list[ToolEvent] = []
+        self._completed: ChatReply | None = None
+        self._exhausted = False
+
+    def __iter__(self) -> Iterator[str]:
+        for frame in self.events():
+            if frame.type == "delta" and frame.text:
+                yield frame.text
+
+    def events(self) -> Iterator[StreamFrame]:
+        """Every frame in order: deltas, tool events and the completed reply."""
+        yield from self._frames
+        self._exhausted = True
+
+    @property
+    def text(self) -> str:
+        """The text streamed so far; all of it once the stream is read."""
+        return "".join(self._chunks)
+
+    @property
+    def tool_events(self) -> list[ToolEvent]:
+        """The steps the agent reported so far."""
+        return list(self._tool_events)
+
+    @property
+    def reply(self) -> ChatReply:
+        """The completed reply, reading the rest of the stream first if needed.
+
+        An agent whose stream ends without a completed frame gets a reply made
+        of the streamed text, so the caller always has one.
+        """
+        if not self._exhausted:
+            for _ in self.events():
+                pass
+        if self._completed is None:
+            self._completed = ChatReply(
+                message={
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": self.text}],
+                },
+                metadata={"tool_events": [t.raw for t in self._tool_events]},
+            )
+        return self._completed
+
+    def _parse(self, lines: Iterable[str]) -> Iterator[StreamFrame]:
+        for event, data in _sse_events(lines):
+            try:
+                body = json.loads(data) if data else {}
+            except ValueError:
+                continue
+            if event == "message.delta":
+                delta = (
+                    (body.get("delta") or {}).get("text")
+                    if isinstance(body, dict)
+                    else None
+                )
+                if isinstance(delta, str) and delta:
+                    self._chunks.append(delta)
+                    yield StreamFrame("delta", text=delta, raw=body)
+            elif event == "tool_event":
+                if isinstance(body, dict) and body.get("name"):
+                    tool = ToolEvent.from_api(body)
+                    self._tool_events.append(tool)
+                    yield StreamFrame("tool", tool=tool, raw=body)
+            elif event == "message.completed":
+                self._completed = ChatReply.from_api(
+                    body if isinstance(body, dict) else {}
+                )
+                yield StreamFrame(
+                    "completed",
+                    text=self._completed.text,
+                    reply=self._completed,
+                    raw=body,
+                )
+            elif event == "error":
+                message = body.get("message") if isinstance(body, dict) else None
+                raise AgentServingError(str(message or "the agent returned an error"))
+
+
+def _sse_events(lines: Iterable[str]) -> Iterator[tuple[str, str]]:
+    """Server-sent events from lines: ``event:`` names a frame, ``data:`` lines fill it, a blank line ends it."""
+    event = "message"
+    data: list[str] = []
+    for raw in lines:
+        line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+        line = line.rstrip("\r")
+        if not line:
+            if data:
+                yield event, "\n".join(data)
+            event, data = "message", []
+        elif line.startswith(":"):
+            continue
+        elif line.startswith("event:"):
+            event = line[6:].strip()
+        elif line.startswith("data:"):
+            data.append(line[5:].lstrip())
+    if data:
+        yield event, "\n".join(data)

@@ -10,7 +10,7 @@ for cluster in agent.clusters(): ...
 """
 
 from ._transport import AgentServingError
-from .agent import Agent
+from .agent import Agent, ChatStream, StreamFrame
 from .client import AgentServing
 from .evals import check
 from .models import (
@@ -33,6 +33,7 @@ from .models import (
     RunMetric,
     Suite,
     Task,
+    ToolEvent,
     ToolMetric,
     Trace,
     TraceMetric,
@@ -48,6 +49,7 @@ __all__ = [
     "AgentServingError",
     "Calibration",
     "ChatReply",
+    "ChatStream",
     "Check",
     "Cluster",
     "EvalJob",
@@ -64,7 +66,9 @@ __all__ = [
     "Run",
     "RunMetric",
     "Suite",
+    "StreamFrame",
     "Task",
+    "ToolEvent",
     "ToolMetric",
     "Trace",
     "TraceMetric",

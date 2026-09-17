@@ -367,6 +367,14 @@ print(reply.text, reply.trace_id)
 agent.chat("And order 43?", conversation_id=reply.conversation_id)
 agent.give_feedback(reply.trace_id, "positive")
 
+# or streamed: text as it is produced, the agent's steps, then the completed reply
+stream = agent.chat_stream("Cancel order 43")
+for delta in stream:
+    print(delta, end="", flush=True)
+print(stream.reply.trace_id, [t.name for t in stream.tool_events])
+for frame in agent.chat_stream("Refund it").events():   # every frame: delta / tool / completed
+    ...
+
 # suites, tasks, the evaluator library
 suite = agents.suites.create(
     "Refunds",
