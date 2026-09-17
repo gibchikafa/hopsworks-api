@@ -5,6 +5,11 @@ the caller is entitled to talk to it, and how a refusal is turned into an error
 that says which rule refused and why -- the API's own message, never a bare
 status. Paths are relative to ``/hopsworks-api/api/project/{id}``, so the same
 transport reaches the evaluation API and the tracing API.
+
+The agents themselves answer somewhere else: behind the inference gateway
+(istio), at ``/v1/{namespace}/{name}``. :meth:`Transport.agent_request` goes
+there, through the model-serving client's istio connection when the caller is
+logged in with ``hopsworks.login()`` and through the same session otherwise.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from ..api import EvalApiError, _StaticAuth, hopsworks_session
 TIMEOUT_S = 60
 
 
-class AgentEvalsError(EvalApiError):
+class AgentServingError(EvalApiError):
     """A refusal from the API, carrying the reason it gave and the status."""
 
     def __init__(self, message: str, status: int = 0):
@@ -47,10 +52,12 @@ class Transport:
         api_key: str | None = None,
         verify: bool | str = True,
         session: Any = None,
+        gateway_url: str | None = None,
     ):
         self.host = host.rstrip("/")
         self.project_id = int(project_id)
         self.base = f"{self.host}/hopsworks-api/api/project/{self.project_id}"
+        self._gateway_url = gateway_url.rstrip("/") if gateway_url else None
         if session is not None:
             self._session = session
         elif api_key:
@@ -81,13 +88,64 @@ class Transport:
             method, self.base + path, params=clean, json=json, timeout=TIMEOUT_S
         )
         if response.status_code >= 400:
-            raise AgentEvalsError(_message(response), response.status_code)
+            raise AgentServingError(_message(response), response.status_code)
         if not getattr(response, "content", b""):
             return None
         return response.json()
 
     def get(self, path: str, **params: Any) -> Any:
         return self.request("GET", path, params=params or None)
+
+    # ── the agents, behind the inference gateway ───────────────────────────
+
+    @property
+    def gateway_url(self) -> str:
+        """Where the inference gateway answers, without a trailing slash.
+
+        Given to the constructor, or read off the model-serving client's istio
+        connection, which the hopsworks library sets up from the cluster's
+        inference endpoints on first use.
+        """
+        if self._gateway_url:
+            return self._gateway_url
+        istio = _istio_client()
+        if istio is None:
+            raise AgentServingError(
+                "no inference gateway: log in with hopsworks.login() so the "
+                "cluster's inference endpoint is known, or pass gateway_url="
+            )
+        return str(istio._base_url).rstrip("/")
+
+    def agent_request(
+        self,
+        method: str,
+        segments: list[str],
+        *,
+        json: Any = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        """Send a request to an agent at ``gateway_url/<segments>``.
+
+        Through the istio client when the caller is logged in and gave no
+        gateway of their own: it carries the credential the gateway accepts and
+        the cluster's certificates. Otherwise through this transport's session,
+        whose credential the gateway accepts as well.
+        """
+        timeout = TIMEOUT_S if timeout is None else timeout
+        if self._gateway_url is None:
+            istio = _istio_client()
+            if istio is not None:
+                return _through_istio(istio, method, segments, json, headers, timeout)
+        url = self.gateway_url + "/" + "/".join(segments)
+        response = self._session.request(
+            method, url, json=json, headers=headers, timeout=timeout
+        )
+        if response.status_code >= 400:
+            raise AgentServingError(_message(response), response.status_code)
+        if not getattr(response, "content", b""):
+            return None
+        return response.json()
 
     def post(self, path: str, json: Any = None, **params: Any) -> Any:
         return self.request("POST", path, params=params or None, json=json)
@@ -102,7 +160,7 @@ class Transport:
 def host_from_env() -> str:
     host = os.environ.get("HOPSWORKS_HOST") or os.environ.get("REST_ENDPOINT")
     if not host:
-        raise AgentEvalsError("no host: pass host= or set HOPSWORKS_HOST")
+        raise AgentServingError("no host: pass host= or set HOPSWORKS_HOST")
     if not host.startswith("http"):
         host = "https://" + host
     return host
@@ -128,6 +186,7 @@ class HopsworksClientSession:
         *,
         params: dict[str, Any] | None = None,
         json: Any = None,
+        headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> Any:
         import json as json_module  # noqa: PLC0415
@@ -138,13 +197,15 @@ class HopsworksClientSession:
         marker = "/hopsworks-api/api/"
         path = url.split(marker, 1)[1] if marker in url else url.lstrip("/")
         path_params = [segment for segment in path.split("/") if segment]
-        headers = {"content-type": "application/json"} if json is not None else None
+        sent = dict(headers or {})
+        if json is not None:
+            sent.setdefault("content-type", "application/json")
         try:
             body = self._client._send_request(
                 method,
                 path_params,
                 query_params=params,
-                headers=headers,
+                headers=sent or None,
                 data=None if json is None else json_module.dumps(json),
                 timeout=timeout,
             )
@@ -187,3 +248,44 @@ def connected_transport() -> Transport | None:
         return None
     host = base_url.split("/hopsworks-api", 1)[0] if base_url else "https://hopsworks"
     return Transport(host, int(project_id), session=HopsworksClientSession(instance))
+
+
+def _istio_client() -> Any:
+    """The model-serving client's istio connection, or None when there is none."""
+    try:
+        from hopsworks_common import client as hopsworks_client  # noqa: PLC0415
+
+        if hopsworks_client.get_instance() is None:
+            return None
+        return hopsworks_client.istio._get_instance()
+    except Exception:  # noqa: BLE001 -- not logged in, or no inference endpoint
+        return None
+
+
+def _through_istio(
+    istio: Any,
+    method: str,
+    segments: list[str],
+    json: Any,
+    headers: dict[str, str] | None,
+    timeout: float,
+) -> Any:
+    import json as json_module  # noqa: PLC0415
+
+    from hopsworks_common.client.exceptions import RestAPIError  # noqa: PLC0415
+
+    sent = dict(headers or {})
+    if json is not None:
+        sent.setdefault("content-type", "application/json")
+    try:
+        return istio._send_request(
+            method,
+            segments,
+            headers=sent or None,
+            data=None if json is None else json_module.dumps(json),
+            with_base_path_params=False,
+            timeout=timeout,
+        )
+    except RestAPIError as err:
+        response = err.response
+        raise AgentServingError(_message(response), response.status_code) from err

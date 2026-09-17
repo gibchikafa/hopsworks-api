@@ -39,6 +39,7 @@ from hopsworks_common.core import (
 
 
 if TYPE_CHECKING:
+    from hopsworks_agent_eval.sdk import AgentServing
     from hsfs.feature_store import FeatureStore
     from hsml.model_registry import ModelRegistry
     from hsml.model_serving import ModelServing
@@ -301,17 +302,28 @@ class Project:
         return self._dataset_api
 
     @public
-    def get_agent_evals_api(self):
-        """Get the agent evaluation and tracing API for the project.
+    def get_agent_serving(self) -> AgentServing:
+        """Connect to the project's Agent Serving API.
 
-        Everything the Hopsworks UI does for agent evaluation and tracing:
-        suites, tasks, the evaluator library, runs, the per-deployment jobs,
-        and, per deployment, traces, feedback, failure analysis and metrics.
+        The agents deployed in the project: send them messages, read their
+        traces and feedback, run evaluation suites against them, and review
+        what the failure analysis found.
+
+        Example: Example for getting the Agent Serving API of a project
+            ```python
+            import hopsworks
+
+            project = hopsworks.login()
+
+            agents = project.get_agent_serving()
+            agent = agents.get_agent("support")
+            print(agent.chat("hello").text)
+            ```
 
         Returns:
-            `hopsworks_agent_eval.sdk.AgentEvals`: the client, bound to this project.
+            The Agent Serving API.
         """
-        from hopsworks_agent_eval.sdk import AgentEvals
+        from hopsworks_agent_eval.sdk import AgentServing
         from hopsworks_agent_eval.sdk._transport import (
             HopsworksClientSession,
             Transport,
@@ -323,7 +335,7 @@ class Project:
             base_url.split("/hopsworks-api", 1)[0] if base_url else "https://hopsworks"
         )
         transport = Transport(host, self.id, session=HopsworksClientSession(instance))
-        return AgentEvals(host, self.id, transport=transport)
+        return AgentServing(host, self.id, transport=transport)
 
     @public
     def get_environment_api(self) -> environment_api.EnvironmentApi:

@@ -1,17 +1,21 @@
-"""A client for everything the Hopsworks UI does for agent evaluation and tracing.
+"""The agent-serving client: everything the Hopsworks UI does for agents, from Python.
 
-from hopsworks_agent_eval.sdk import login, check
+import hopsworks
+from hopsworks_agent_eval.sdk import check
 
-evals = login()
-deployment = evals.deployment(7)
-for cluster in deployment.clusters(): ...
+agents = hopsworks.login().get_agent_serving()
+agent = agents.get_agent("support")
+print(agent.chat("hello").text)
+for cluster in agent.clusters(): ...
 """
 
-from ._transport import AgentEvalsError
-from .client import AgentEvals, login
+from ._transport import AgentServingError
+from .agent import Agent
+from .client import AgentServing
 from .evals import check
 from .models import (
     Calibration,
+    ChatReply,
     Check,
     Cluster,
     EvalJob,
@@ -36,16 +40,16 @@ from .models import (
     Triage,
     Trial,
 )
-from .tracing import Deployment
 
 
 __all__ = [
-    "AgentEvals",
-    "AgentEvalsError",
+    "Agent",
+    "AgentServing",
+    "AgentServingError",
     "Calibration",
+    "ChatReply",
     "Check",
     "Cluster",
-    "Deployment",
     "EvalJob",
     "EvaluatorResult",
     "EvaluatorTemplate",
@@ -68,5 +72,4 @@ __all__ = [
     "Trial",
     "Triage",
     "check",
-    "login",
 ]

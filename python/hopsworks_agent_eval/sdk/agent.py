@@ -1,16 +1,22 @@
-"""The tracing side of the client, scoped to one deployment.
+"""One deployed agent: talking to it, and everything Hopsworks recorded about it.
 
-What the Trace Summaries card, the Feedback tab, the failure analysis and the
-monitoring dashboards read and write, as methods on a deployment handle.
+What the chat panel, the Trace Summaries card, the Feedback tab, the failure
+analysis and the monitoring dashboards do for one deployment, as methods on an
+agent handle. The handle is fetched through :meth:`AgentServing.get_agent`.
 """
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Any
 
+from hopsworks_apigen import public
+
+from ._transport import AgentServingError
 from .evals import epoch_ms
 from .models import (
     Calibration,
+    ChatReply,
     Cluster,
     Feedback,
     FeedbackPage,
@@ -30,26 +36,216 @@ from .models import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from .client import AgentEvals
+    from .client import AgentServing
     from .models import EvalJob, ReviewJob, Task
 
 VERDICTS = ("positive", "negative", "false_alarm")
+MANIFEST_PATH = ".well-known/hopsworks-agent.json"
 
 
-class Deployment:
-    """One agent deployment: its traces, feedback, analysis and the jobs that evaluate it."""
+def is_agent(serving: dict[str, Any]) -> bool:
+    """Whether a serving row is an agent: a Python server with no model artifact behind it."""
+    return str(serving.get("modelServer") or "").upper() == "PYTHON" and not (
+        serving.get("modelName") or serving.get("modelPath")
+    )
 
-    def __init__(self, client: AgentEvals, deployment_id: int):
+
+@public
+class Agent:
+    """One agent deployment: send it messages, read its traces and feedback, evaluate it.
+
+    Fetched with `agent_serving.get_agent(name_or_id)`; never constructed directly.
+    """
+
+    def __init__(
+        self,
+        client: AgentServing,
+        deployment_id: int,
+        *,
+        serving: dict[str, Any] | None = None,
+    ):
         self._client = client
         self._http = client.http
         self.id = int(deployment_id)
+        self._serving = dict(serving or {})
         self._otel = f"/otel/servings/{self.id}"
+        self._chat_path: str | None = None
+        self._deployment: Any = None
 
     def __repr__(self) -> str:
-        return f"Deployment({self.id})"
+        return f"Agent({self.id}, name={self.name!r})"
+
+    # ── what the deployment is ─────────────────────────────────────────────
+
+    @property
+    def serving(self) -> dict[str, Any]:
+        """The deployment as the serving API describes it."""
+        if not self._serving:
+            self._serving = dict(self._http.get(f"/serving/{self.id}") or {})
+        return self._serving
+
+    @public
+    @property
+    def name(self) -> str:
+        """Name of the agent deployment."""
+        return str(self.serving.get("name") or "")
+
+    @property
+    def namespace(self) -> str:
+        """The Kubernetes namespace the agent runs in; what the gateway routes on."""
+        return str(self.serving.get("projectNamespace") or "")
+
+    @public
+    @property
+    def url(self) -> str:
+        """Base URL of the agent behind the inference gateway, e.g. `https://gw/v1/ns/name`."""
+        return f"{self._http.gateway_url}/v1/{self.namespace}/{self.name}"
+
+    @public
+    def refresh(self) -> Agent:
+        """Re-read the deployment from the serving API."""
+        self._serving = {}
+        self._deployment = None
+        _ = self.serving
+        return self
+
+    # ── talking to it ──────────────────────────────────────────────────────
+
+    @public
+    def manifest(self) -> dict[str, Any]:
+        """The agent's self-description: its protocol version, endpoints and capabilities."""
+        manifest = self._agent_get(MANIFEST_PATH) or {}
+        self._chat_path = (manifest.get("endpoints") or {}).get("chat")
+        return manifest
+
+    @public
+    def chat(
+        self,
+        text: str,
+        *,
+        conversation_id: str | None = None,
+        subject: str | None = None,
+        context: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        timeout: float = 120.0,
+    ) -> ChatReply:
+        """Send the agent one message and get its reply.
+
+        Example:
+            ```python
+            reply = agent.chat("Where is order 42?")
+            print(reply.text)
+            follow_up = agent.chat("And order 43?", conversation_id=reply.conversation_id)
+            ```
+
+        Parameters:
+            text: The user's message.
+            conversation_id: Thread this message onto an earlier reply's conversation, so the agent's own memory sees one conversation. A new conversation when omitted.
+            subject: Who the end user is, for agents that keep per-user memory.
+            context: Extra request context the agent reads.
+            metadata: Extra request metadata the agent reads.
+            timeout: Seconds to wait for the reply.
+
+        Returns:
+            `ChatReply`: the reply, with its text, its conversation id and the trace id the agent recorded.
+
+        Raises:
+            `AgentServingError`: If the agent or the gateway refuses the request.
+        """
+        payload: dict[str, Any] = {
+            "message": {"role": "user", "content": [{"type": "text", "text": text}]}
+        }
+        if conversation_id:
+            payload["conversation_id"] = conversation_id
+        if subject:
+            payload["subject"] = subject
+        if context:
+            payload["context"] = context
+        if metadata:
+            payload["metadata"] = metadata
+        body = self._http.agent_request(
+            "POST",
+            self._segments(self._resolve_chat_path()),
+            json=payload,
+            timeout=timeout,
+        )
+        return ChatReply.from_api(body)
+
+    def _resolve_chat_path(self) -> str:
+        if self._chat_path is None:
+            # not a protocol agent, or the manifest is not served: the
+            # protocol's default route is the best guess there is
+            with contextlib.suppress(AgentServingError):
+                self.manifest()
+            self._chat_path = self._chat_path or "/v1/chat"
+        return self._chat_path
+
+    def _agent_get(self, path: str) -> Any:
+        return self._http.agent_request("GET", self._segments(path))
+
+    def _segments(self, path: str) -> list[str]:
+        return ["v1", self.namespace, self.name, *[p for p in path.split("/") if p]]
+
+    # ── the deployment's lifecycle, through model serving ──────────────────
+
+    @public
+    @property
+    def deployment(self) -> Any:
+        """The same deployment as model serving sees it (`hsml.deployment.Deployment`).
+
+        For what only model serving does: resources, scaling, logs, describe.
+        """
+        if self._deployment is None:
+            from hopsworks_common import client as hopsworks_client  # noqa: PLC0415
+            from hsml.deployment import Deployment  # noqa: PLC0415
+
+            instance = hopsworks_client.get_instance()
+            if instance is None:
+                raise AgentServingError(
+                    "the deployment handle needs hopsworks.login(); this client "
+                    "is not connected"
+                )
+            deployment = Deployment.from_response_json(dict(self.serving))
+            deployment.model_registry_id = instance._project_id
+            deployment.project_name = instance._project_name
+            self._deployment = deployment
+        return self._deployment
+
+    @public
+    def start(self, await_running: int | None = 600) -> None:
+        """Start the agent. Waits up to `await_running` seconds for it to be running."""
+        self.deployment.start(await_running=await_running)
+
+    @public
+    def stop(self, await_stopped: int | None = 600) -> None:
+        """Stop the agent. Waits up to `await_stopped` seconds for it to be stopped."""
+        self.deployment.stop(await_stopped=await_stopped)
+
+    @public
+    def restart(
+        self, await_stopped: int | None = 600, await_running: int | None = 600
+    ) -> None:
+        """Restart the agent, rolling it onto the code it was last deployed with."""
+        self.deployment.restart(
+            await_stopped=await_stopped, await_running=await_running
+        )
+
+    @public
+    def is_running(self) -> bool:
+        """Whether the agent is running (or idle) and can take messages."""
+        return bool(self.deployment.is_running())
+
+    @public
+    def delete(self, force: bool = False) -> None:
+        """Delete the agent deployment. `force=True` deletes it while it is running."""
+        self.deployment.delete(force=force)
+
+    @public
+    def get_logs(self, component: str = "predictor", tail: int = 10) -> Any:
+        """The agent's recent log lines, as model serving returns them."""
+        return self.deployment.get_logs(component=component, tail=tail)
 
     # ── traces ─────────────────────────────────────────────────────────────
-
     def traces(
         self,
         *,

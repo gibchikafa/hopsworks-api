@@ -358,6 +358,43 @@ class GateResult(ApiModel):
 
 
 @dataclass
+class ChatReply(ApiModel):
+    """The agent's answer to one `Agent.chat()` message, in the agent protocol's shape."""
+
+    id: str = ""
+    conversation_id: str = ""
+    message: dict[str, Any] = field(default_factory=dict)
+    citations: list[dict[str, Any]] = field(default_factory=list)
+    usage: dict[str, int] | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    status: str = "completed"
+
+    @property
+    def parts(self) -> list[dict[str, Any]]:
+        """The reply's content parts: text, and any image, file or audio the agent returned."""
+        return list(self.message.get("content") or [])
+
+    @property
+    def text(self) -> str:
+        """The reply as plain text: its text parts joined."""
+        return "".join(
+            str(part.get("text") or "")
+            for part in self.parts
+            if part.get("type") == "text"
+        )
+
+    @property
+    def trace_id(self) -> str | None:
+        """The trace the agent recorded for this turn; what feedback and evaluation refer to."""
+        value = self.metadata.get("trace_id")
+        return str(value) if value else None
+
+    @property
+    def failed(self) -> bool:
+        return self.status == "failed"
+
+
+@dataclass
 class TraceSummary(ApiModel):
     """One trace as the list shows it: its root span, with the conversation joined on."""
 

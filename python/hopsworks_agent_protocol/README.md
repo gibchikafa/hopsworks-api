@@ -344,19 +344,31 @@ def custom():
     ...
 ```
 
-## Client: evaluation and tracing from Python
+## Client: talking to agents, tracing and evaluation from Python
 
-Everything the Hopsworks UI does for agent evaluation and tracing is reachable
-from `hopsworks_agent_eval.sdk`. Standalone for now; shaped to slot into the
-`hopsworks` library later, which is why the entry point mirrors `hopsworks.login()`.
+Everything the Hopsworks UI does for agents is reachable from the project's
+agent-serving API. It rides the connected `hopsworks` client, so nothing else
+needs configuring inside a job or a notebook, and an API key from outside.
 
 ```python
-from hopsworks_agent_eval.sdk import login, check
+import hopsworks
+from hopsworks_agent_eval.sdk import check
 
-evals = login()  # inside Hopsworks; outside: login(host=..., project_id=..., api_key=...)
+project = hopsworks.login()
+agents = project.get_agent_serving()
+
+# the agents: by name or id, or all of them
+agent = agents.get_agent("support")
+print(agent.url, agent.is_running())
+
+# talk to one; the reply carries the conversation to continue and the trace it recorded
+reply = agent.chat("Where is order 42?")
+print(reply.text, reply.trace_id)
+agent.chat("And order 43?", conversation_id=reply.conversation_id)
+agent.give_feedback(reply.trace_id, "positive")
 
 # suites, tasks, the evaluator library
-suite = evals.suites.create(
+suite = agents.suites.create(
     "Refunds",
     checks=[check("llm_judge", "quality", provider="anthropic",
                   criteria=["Answers the question", "Uses the customer key"]),
@@ -368,46 +380,53 @@ suite.import_tasks([{"question": "Where is my order?"}, {"question": "Cancel it"
 suite = suite.publish()          # frozen; runs can say what they executed
 suite.update(description="Refund flows")   # name, tags, description at any time
 
-# runs against a deployment
-deployment = evals.deployment(7)
-run = deployment.run(suite, n_trials=3).wait()
+# runs against the agent
+run = agent.run(suite, n_trials=3).wait()
 for trial in run.trials():
     print(trial.task_id, trial.status, trial.latency_ms)
 for result in run.results():
     print(result.evaluator_name, result.passed, result.reason)
-print(deployment.gates().passed)
+print(agent.gates().passed)
 
 # production: traces, sessions, feedback
-for trace in deployment.traces(search="customer key", search_field="messages"):
+for trace in agent.traces(search="customer key", search_field="messages"):
     print(trace.trace_id, trace.session_id, trace.latency_ms, trace.failed)
-for turn in deployment.conversation("conv_123"):
+for turn in agent.conversation("conv_123"):
     print(turn["user"], "->", turn["assistant"])
-deployment.give_feedback("305b97bb...", "negative", issue_category="wrong_tool",
-                         corrected_answer="Look the customer up by the key they gave.")
-page = deployment.feedback(verdict="negative")
+agent.give_feedback("305b97bb...", "negative", issue_category="wrong_tool",
+                    corrected_answer="Look the customer up by the key they gave.")
+page = agent.feedback(verdict="negative")
 print(page.count, [f.reviewer for f in page.feedback])
 
 # failure analysis: the job, the proposals, the clusters
-job = evals.jobs.ensure_review_job(7, provider="anthropic", model="claude-sonnet-5",
-                                   sources=["feedback", "errors", "judge"], read_source_code=True)
+job = agents.jobs.ensure_review_job(agent.id, provider="anthropic", model="claude-sonnet-5",
+                                    sources=["feedback", "errors", "judge"], read_source_code=True)
 run = job.analyse().wait()                       # or job.analyse(since=..., until=...) / trace_id=...
-for triage in deployment.triage(page.feedback):
+for triage in agent.triage(page.feedback):
     print(triage.category, triage.failure_summary, triage.suspected_code_bug, triage.findings)
-    deployment.decide_triage(triage, "accepted")
-for cluster in deployment.clusters():
+    agent.decide_triage(triage, "accepted")
+for cluster in agent.clusters():
     print(cluster.label, cluster.size)
-task = deployment.promote_cluster(deployment.clusters()[0])   # PENDING_REDACTION
+task = agent.promote_cluster(agent.clusters()[0])   # PENDING_REDACTION
 task.confirm_redaction().add_to_regressions()
-evals.jobs.run_regressions(7)
+agents.jobs.run_regressions(agent.id)
 
 # monitoring
-deployment.sample(evaluator=evals.evaluators.find("Hallucination"))
-deployment.trace_metrics(since=..., until=...); deployment.llm_metrics(); deployment.tool_metrics()
+agent.sample(evaluator=agents.evaluators.find("Hallucination"))
+agent.trace_metrics(since=..., until=...); agent.llm_metrics(); agent.tool_metrics()
+
+# lifecycle, the same as model serving's
+agent = agents.deploy_agent("my_agent.py", name="support")
+agent.start(); agent.restart(); agent.stop()
+agent.deployment       # the hsml Deployment, for resources, scaling and logs
 ```
 
 Every model keeps `raw`, the API's dict, so a field the model does not name is
-still there. A refusal raises `AgentEvalsError` with the API's own message and
-the status.
+still there. A refusal raises `AgentServingError` with the API's own message and
+the status. Messages reach the agent through the cluster's inference gateway
+(the same route the chat panel uses); outside Hopsworks the API key is the
+credential, and `AgentServing(..., gateway_url=...)` names the gateway when the
+library cannot discover it.
 
 ## Development
 

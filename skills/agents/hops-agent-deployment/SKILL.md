@@ -81,8 +81,31 @@ deployment = ms.deploy_agent(
     upload_dir="Resources/agents",       # default
 )
 deployment.start(await_running=600)
-print(deployment.predict(inputs={"prompt": "hello"}))
 # After editing the code: re-create, then deployment.restart()
+```
+
+## Talk to, trace and evaluate — SDK
+
+The agent-serving API is where a deployed agent is used: it sends messages
+through the inference gateway (the route the chat panel uses), reads the
+traces and feedback the agent produced, and runs evaluation suites and the
+failure analysis. Evaluation lives under the same API.
+
+```python
+agents = project.get_agent_serving()
+agent = agents.get_agent("my_agent")          # by name or deployment id
+
+reply = agent.chat("hello")                   # ChatReply: .text, .conversation_id, .trace_id
+agent.chat("and then?", conversation_id=reply.conversation_id)
+agent.give_feedback(reply.trace_id, "positive")
+
+for trace in agent.traces(limit=5):
+    print(trace.trace_id, trace.latency_ms, trace.failed)
+
+suite = agents.suites.find("Refunds")
+run = agent.run(suite).wait()                 # trials, results, metrics on the run
+agent.analyse().wait()                        # failure analysis; agent.clusters() afterwards
+agent.start(); agent.restart(); agent.stop()  # lifecycle, same as model serving
 ```
 
 ### Git-backed Agents

@@ -1,33 +1,33 @@
-"""The client: one object bound to a project, with a handle per kind of thing.
+"""The agent-serving client: one object bound to a project.
 
-    from hopsworks_agent_eval.sdk import login
+    project = hopsworks.login()
+    agents = project.get_agent_serving()
 
-    evals = login()                       # inside Hopsworks; or login(host=..., project_id=..., api_key=...)
-    suite = evals.suites.create("Refunds", checks=[check("llm_judge", "quality", criteria=[...])])
-    evals.tasks.create("Refund order 42", expectations={"quality": "..."}).add_to(suite)
+    agent = agents.get_agent("support")          # by name, or by id
+    reply = agent.chat("Where is order 42?")
+    for trace in agent.traces(): ...
+
+    suite = agents.suites.create("Refunds", checks=[check("llm_judge", "quality", criteria=[...])])
+    agents.tasks.create("Refund order 42", expectations={"quality": "..."}).add_to(suite)
     suite.publish()
-    run = evals.deployment(7).run(suite).wait()
-    for trial in run.trials(): ...
+    run = agent.run(suite).wait()
 
-Everything the UI does for agent evaluation and tracing is reachable here. The
-package is standalone for now and shaped to slot into the hopsworks library
-later, which is why the entry point mirrors ``hopsworks.login()``.
+Everything the UI does for agents -- talking to them, their traces and
+feedback, evaluation suites and runs, the failure analysis -- is reachable from
+here. The agents are the deployments model serving knows as agents; deploying
+one is `deploy_agent`, the same call as on model serving.
 """
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from ._transport import (
-    AgentEvalsError,
-    Transport,
-    connected_transport,
-    host_from_env,
-)
+from hopsworks_apigen import public
+
+from ._transport import AgentServingError, Transport
+from .agent import Agent, is_agent
 from .evals import Evaluators, Jobs, Runs, Suites, Tasks
 from .models import ApiModel, ReviewJob, Run, Suite, Task
-from .tracing import Deployment
 
 
 if TYPE_CHECKING:
@@ -37,7 +37,20 @@ if TYPE_CHECKING:
 M = TypeVar("M", bound=ApiModel)
 
 
-class AgentEvals:
+@public
+class AgentServing:
+    """The agents of a project: talk to them, read their traces, evaluate them.
+
+    Fetched with `project.get_agent_serving()`; never constructed directly.
+
+    Attributes:
+        suites: The project's evaluation suites.
+        tasks: The tasks suites are made of.
+        evaluators: The evaluator library (saved judge and check templates).
+        runs: Evaluation runs, across agents.
+        jobs: The per-agent evaluation and failure-analysis jobs.
+    """
+
     def __init__(
         self,
         host: str,
@@ -46,10 +59,16 @@ class AgentEvals:
         api_key: str | None = None,
         verify: bool | str = True,
         session: Any = None,
+        gateway_url: str | None = None,
         transport: Transport | None = None,
     ):
         self.http = transport or Transport(
-            host, project_id, api_key=api_key, verify=verify, session=session
+            host,
+            project_id,
+            api_key=api_key,
+            verify=verify,
+            session=session,
+            gateway_url=gateway_url,
         )
         self.project_id = int(project_id)
         self.suites = Suites(self)
@@ -59,10 +78,87 @@ class AgentEvals:
         self.jobs = Jobs(self)
 
     def __repr__(self) -> str:
-        return f"AgentEvals(project={self.project_id}, host={self.http.host!r})"
+        return f"AgentServing(project={self.project_id}, host={self.http.host!r})"
 
-    def deployment(self, deployment_id: int) -> Deployment:
-        return Deployment(self, deployment_id)
+    # ── the agents ─────────────────────────────────────────────────────────
+
+    @public
+    def get_agent(self, agent: str | int) -> Agent | None:
+        """Get an agent by name or by deployment id.
+
+        Example:
+            ```python
+            agents = project.get_agent_serving()
+            agent = agents.get_agent("support")
+            print(agent.chat("hello").text)
+            ```
+
+        Parameters:
+            agent: The deployment's name, or its id.
+
+        Returns:
+            `Agent`: the agent, or `None` when no deployment has that name or id.
+
+        Raises:
+            `AgentServingError`: If the deployment exists but is a model deployment rather than an agent.
+        """
+        serving = self._serving_row(agent)
+        if serving is None:
+            return None
+        if not is_agent(serving):
+            raise AgentServingError(
+                f"deployment {serving.get('name')!r} serves a model, not an agent; "
+                "use project.get_model_serving() for it"
+            )
+        return Agent(self, int(serving["id"]), serving=serving)
+
+    @public
+    def get_agents(self) -> list[Agent]:
+        """Every agent deployment in the project.
+
+        Returns:
+            `list[Agent]`: the agents, as the serving API lists them.
+        """
+        rows = self.http.get("/serving") or []
+        return [
+            Agent(self, int(row["id"]), serving=row) for row in rows if is_agent(row)
+        ]
+
+    @public
+    def deploy_agent(self, entry: str, name: str | None = None, **kwargs: Any) -> Agent:
+        """Deploy a Python script or package as an agent; the same call as `ModelServing.deploy_agent`.
+
+        The agent is created on first call and updated on the next ones. Its
+        running state is left alone: `agent.start()` after the first deploy,
+        `agent.restart()` to roll a running agent onto new code.
+
+        Parameters:
+            entry: Path to the agent's entry script or package directory.
+            name: Name of the deployment; the entry's file name when omitted.
+            **kwargs: Everything `ModelServing.deploy_agent` takes (requirements, environment, resources, git_url, ...).
+
+        Returns:
+            `Agent`: the deployed agent.
+        """
+        from hopsworks_common import client as hopsworks_client  # noqa: PLC0415
+
+        serving = hopsworks_client._get_connection()._get_model_serving()
+        deployment = serving.deploy_agent(entry, name=name, **kwargs)
+        agent = self.get_agent(int(deployment.id))
+        if agent is None:  # pragma: no cover - the deployment was just created
+            raise AgentServingError(f"deployment {deployment.id} vanished after deploy")
+        return agent
+
+    def _serving_row(self, agent: str | int) -> dict[str, Any] | None:
+        by_id = isinstance(agent, int) or (isinstance(agent, str) and agent.isdigit())
+        try:
+            if by_id:
+                return self.http.get(f"/serving/{int(agent)}")
+            return self.http.get("/serving", name=str(agent))
+        except AgentServingError as err:
+            if err.status == 404:
+                return None
+            raise
 
     # models that act on themselves need the client they came from
     def _bind(self, model: M) -> M:
@@ -73,52 +169,13 @@ class AgentEvals:
         return [self._bind(m) for m in models]
 
 
-def login(
-    host: str | None = None,
-    project_id: int | None = None,
-    *,
-    api_key: str | None = None,
-    verify: bool | str = True,
-) -> AgentEvals:
-    """A client for one project.
-
-    Inside Hopsworks -- a job, a notebook -- nothing needs passing: the host and
-    the project come from the environment and the connected client, and the
-    caller's own token is used. From outside, pass ``host``, ``project_id`` and
-    an ``api_key`` with the serving scope (or set HOPSWORKS_HOST,
-    HOPSWORKS_PROJECT_ID and HOPSWORKS_API_KEY).
-    """
-    if host is None and project_id is None and api_key is None:
-        # already connected through hopsworks.login(): borrow that client, its
-        # token and the cluster's certificates rather than building a second one
-        connected = connected_transport()
-        if connected is not None:
-            return AgentEvals(connected.host, connected.project_id, transport=connected)
-    host = host or host_from_env()
-    api_key = api_key or os.environ.get("HOPSWORKS_API_KEY")
-    if project_id is None:
-        raw = os.environ.get("HOPSWORKS_PROJECT_ID")
-        if raw:
-            project_id = int(raw)
-        else:
-            try:
-                import hopsworks  # noqa: PLC0415 -- only inside Hopsworks
-
-                project_id = hopsworks.login().id
-            except Exception as err:  # noqa: BLE001 -- the reason is the message
-                raise AgentEvalsError(
-                    f"no project: pass project_id= or set HOPSWORKS_PROJECT_ID ({err})"
-                ) from err
-    return AgentEvals(host, project_id, api_key=api_key, verify=verify)
-
-
 # ── methods on the models, calling back through the client they came from ──
 
 
-def _client_of(model: ApiModel) -> AgentEvals:
+def _client_of(model: ApiModel) -> AgentServing:
     client = getattr(model, "_client", None)
     if client is None:
-        raise AgentEvalsError(
+        raise AgentServingError(
             "this object was not fetched through a client; use the client's methods instead"
         )
     return client

@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 
 import pytest
 from hopsworks_agent_eval.sdk import (
-    AgentEvals,
-    AgentEvalsError,
+    Agent,
+    AgentServing,
+    AgentServingError,
     Cluster,
     Suite,
     Task,
@@ -32,7 +33,7 @@ class FakeSession:
         self.replies = list(replies)
         self.sent: list[tuple[str, str, dict | None, object]] = []
 
-    def request(self, method, url, params=None, json=None, timeout=None):
+    def request(self, method, url, params=None, json=None, headers=None, timeout=None):
         self.sent.append(
             (
                 method,
@@ -41,12 +42,32 @@ class FakeSession:
                 json,
             )
         )
+        self.headers = headers
         return self.replies.pop(0) if self.replies else Reply({})
 
 
 def client(*replies):
     session = FakeSession(*replies)
-    return AgentEvals("https://h", 1, session=session), session
+    return (
+        AgentServing("https://h", 1, session=session, gateway_url="https://gw"),
+        session,
+    )
+
+
+SERVING = {
+    "id": 7,
+    "name": "support",
+    "projectNamespace": "g1",
+    "modelServer": "PYTHON",
+}
+
+
+def agent(*replies) -> tuple[AgentServing, Agent, FakeSession]:
+    """A client whose agent 7 is already fetched; only the test's own requests are recorded."""
+    evals, session = client(Reply(SERVING), *replies)
+    fetched = evals.get_agent(7)
+    session.sent.clear()
+    return evals, fetched, session
 
 
 class TestTransport:
@@ -54,7 +75,7 @@ class TestTransport:
         evals, _ = client(
             Reply({"usrMsg": "a suite needs a name", "errorCode": 1}, status=400)
         )
-        with pytest.raises(AgentEvalsError, match="a suite needs a name") as err:
+        with pytest.raises(AgentServingError, match="a suite needs a name") as err:
             evals.suites.list()
         assert err.value.status == 400
 
@@ -121,7 +142,7 @@ class TestSuites:
         assert [t.task_id for t in suite.tasks()] == ["t"]
 
     def test_a_model_not_from_a_client_says_so(self):
-        with pytest.raises(AgentEvalsError, match="not fetched through a client"):
+        with pytest.raises(AgentServingError, match="not fetched through a client"):
             Suite.from_api({"suiteId": "s"}).publish()
 
     def test_new_version_carries_settings_and_checks_forward(self):
@@ -263,12 +284,12 @@ class TestRuns:
 
     def test_wait_gives_up_with_the_status_it_saw(self):
         evals, _ = client(Reply({"runId": "r", "status": "RUNNING"}))
-        with pytest.raises(AgentEvalsError, match="still RUNNING"):
+        with pytest.raises(AgentServingError, match="still RUNNING"):
             evals.runs.wait("r", timeout_s=0, poll_s=0)
 
     def test_sampling_production_needs_something_to_grade_with(self):
         evals, session = client(Reply({"runId": "r", "runType": "ONLINE_SAMPLE"}))
-        with pytest.raises(AgentEvalsError, match="evaluator or a suite"):
+        with pytest.raises(AgentServingError, match="evaluator or a suite"):
             evals.runs.sample(7)
         since = datetime(2026, 9, 1, tzinfo=timezone.utc)
         evals.runs.sample(7, evaluator="tmpl", since=since)
@@ -396,7 +417,7 @@ def trace_row(trace_id, start_ms, messages):
 
 class TestTracing:
     def test_traces_are_listed_and_searched(self):
-        evals, session = client(
+        evals, agent7, session = agent(
             Reply(
                 {
                     "items": [trace_row("t1", 10, [{"role": "user", "content": "hi"}])],
@@ -404,9 +425,7 @@ class TestTracing:
                 }
             )
         )
-        [trace] = evals.deployment(7).traces(
-            search="hi", search_field="messages", limit=5
-        )
+        [trace] = agent7.traces(search="hi", search_field="messages", limit=5)
         assert session.sent[0][1] == "/otel/servings/7/traces"
         assert session.sent[0][2] == {
             "limit": 5,
@@ -417,7 +436,7 @@ class TestTracing:
         assert trace.started_at == datetime.fromtimestamp(0.01, tz=timezone.utc)
 
     def test_a_session_becomes_the_conversation_the_user_had(self):
-        evals, _ = client(
+        evals, agent7, _ = agent(
             Reply(
                 {
                     "items": [
@@ -443,7 +462,7 @@ class TestTracing:
                 }
             )
         )
-        turns = evals.deployment(7).conversation("conv")
+        turns = agent7.conversation("conv")
         assert [t["trace_id"] for t in turns] == ["first", "later"]
         assert turns[1] == {
             "trace_id": "later",
@@ -452,7 +471,7 @@ class TestTracing:
         }
 
     def test_a_whole_trace_reads_its_tool_calls_off_the_attributes(self):
-        evals, _ = client(
+        evals, agent7, _ = agent(
             Reply(
                 {
                     "spans": [
@@ -487,7 +506,7 @@ class TestTracing:
                 }
             )
         )
-        trace = evals.deployment(7).trace("t")
+        trace = agent7.trace("t")
         assert trace.trace_id == "t" and trace.root["spanId"] == "root"
         [call] = trace.tool_calls
         assert (
@@ -496,7 +515,7 @@ class TestTracing:
         assert call["arguments"] == '{"key": "629e"}'
 
     def test_feedback_is_given_read_and_taken_back(self):
-        evals, session = client(
+        evals, agent7, session = agent(
             Reply(
                 {
                     "feedbackId": "f",
@@ -520,7 +539,7 @@ class TestTracing:
             ),
             Reply(None),
         )
-        deployment = evals.deployment(7)
+        deployment = agent7
         given = deployment.give_feedback(
             "t", "negative", issue_category="wrong_tool", corrected_answer="use the key"
         )
@@ -539,16 +558,16 @@ class TestTracing:
             deployment.give_feedback("t", "meh")
 
     def test_all_feedback_walks_the_pages(self):
-        evals, session = client(
+        evals, agent7, session = agent(
             Reply({"count": 3, "items": [{"feedbackId": "1"}, {"feedbackId": "2"}]}),
             Reply({"count": 3, "items": [{"feedbackId": "3"}]}),
         )
-        rows = evals.deployment(7).all_feedback(limit=2, verdict="negative")
+        rows = agent7.all_feedback(limit=2, verdict="negative")
         assert [r.feedback_id for r in rows] == ["1", "2", "3"]
         assert session.sent[1][2]["offset"] == 2
 
     def test_the_summary_is_about_people_unless_asked_otherwise(self):
-        evals, session = client(
+        evals, agent7, session = agent(
             Reply(
                 {
                     "from": 1,
@@ -559,7 +578,7 @@ class TestTracing:
                 }
             )
         )
-        summary = evals.deployment(7).feedback_summary(since=1, until=2)
+        summary = agent7.feedback_summary(since=1, until=2)
         assert (
             summary.positive == 3
             and summary.from_ms == 1
@@ -568,7 +587,7 @@ class TestTracing:
         assert session.sent[0][2] == {"from": 1, "to": 2, "source": "human"}
 
     def test_triage_and_the_decision_that_calibrates_it(self):
-        evals, session = client(
+        evals, agent7, session = agent(
             Reply(
                 [
                     {
@@ -591,7 +610,7 @@ class TestTracing:
             Reply(None),
             Reply({"decisions": 4, "accepted": 3, "acceptanceRate": 0.75}),
         )
-        deployment = evals.deployment(7)
+        deployment = agent7
         [triage] = deployment.triage(["f"])
         assert session.sent[0][2] == {"feedbackId": ["f"]}
         assert (
@@ -610,7 +629,7 @@ class TestTracing:
         assert deployment.triage([]) == []
 
     def test_clusters_are_promoted_from_their_representative(self):
-        evals, session = client(
+        evals, agent7, session = agent(
             Reply(
                 [
                     {
@@ -633,7 +652,7 @@ class TestTracing:
             Reply({"taskId": "task"}),
             Reply(None),
         )
-        deployment = evals.deployment(7)
+        deployment = agent7
         [cluster] = deployment.clusters()
         assert session.sent[0][2] == {"status": "open"}
         task = deployment.promote_cluster(cluster)
@@ -648,8 +667,8 @@ class TestTracing:
         )
 
     def test_dismiss_rename_and_reopen(self):
-        evals, session = client(Reply(None), Reply(None), Reply(None))
-        deployment = evals.deployment(7)
+        evals, agent7, session = agent(Reply(None), Reply(None), Reply(None))
+        deployment = agent7
         deployment.dismiss_cluster("c", "working_as_intended")
         deployment.rename_cluster(
             Cluster.from_api({"clusterId": "c"}), "Ignores the key"
@@ -663,7 +682,7 @@ class TestTracing:
         assert session.sent[2][2] == {"status": "open"}
 
     def test_metrics_gates_and_canary(self):
-        evals, session = client(
+        evals, agent7, session = agent(
             Reply(
                 [
                     {
@@ -684,7 +703,7 @@ class TestTracing:
             ),
             Reply([{"runId": "r"}]),
         )
-        deployment = evals.deployment(7)
+        deployment = agent7
         assert deployment.trace_metrics(since=1, until=2)[0].trace_error_count == 1
         assert session.sent[0][2] == {"from": 1, "to": 2}
         assert deployment.tool_metrics()[0].tool_name == "lookup"
@@ -699,15 +718,133 @@ class TestTracing:
         )
 
     def test_analyse_creates_the_job_when_the_deployment_has_none(self):
-        evals, session = client(
+        evals, agent7, session = agent(
             Reply([]), Reply({"name": "agent_feedback_review"}), Reply({"runId": "r"})
         )
-        run = evals.deployment(7).analyse()
+        run = agent7.analyse()
         assert run.run_id == "r"
         assert session.sent[1][:2] == ("POST", "/agent-evals/review-jobs")
         assert (
             session.sent[2][1] == "/agent-evals/review-jobs/agent_feedback_review/run"
         )
+
+
+class TestAgents:
+    def test_an_agent_is_fetched_by_name_or_id_and_refused_for_a_model(self):
+        evals, session = client(Reply(SERVING), Reply(SERVING))
+        by_name = evals.get_agent("support")
+        assert session.sent[0][:3] == ("GET", "/serving", {"name": "support"})
+        by_id = evals.get_agent("7")
+        assert session.sent[1][:2] == ("GET", "/serving/7")
+        assert by_name.id == by_id.id == 7 and by_name.name == "support"
+        assert repr(by_name) == "Agent(7, name='support')"
+
+        evals, _ = client(Reply({"usrMsg": "Serving not found"}, status=404))
+        assert evals.get_agent("missing") is None
+
+        evals, _ = client(
+            Reply({"id": 8, "name": "fraud", "modelServer": "PYTHON", "modelName": "m"})
+        )
+        with pytest.raises(AgentServingError, match="serves a model, not an agent"):
+            evals.get_agent(8)
+
+    def test_only_agents_are_listed(self):
+        evals, _ = client(
+            Reply(
+                [
+                    SERVING,
+                    {
+                        "id": 8,
+                        "name": "fraud",
+                        "modelServer": "PYTHON",
+                        "modelName": "m",
+                    },
+                    {"id": 9, "name": "llm", "modelServer": "VLLM"},
+                ]
+            )
+        )
+        assert [a.name for a in evals.get_agents()] == ["support"]
+
+    def test_the_agent_lives_behind_the_gateway(self):
+        _, agent7, _ = agent()
+        assert agent7.url == "https://gw/v1/g1/support"
+
+    def test_chat_speaks_the_protocol_and_threads_a_conversation(self):
+        _, agent7, session = agent(
+            Reply({"endpoints": {"chat": "/v1/chat"}, "capabilities": ["tracing"]}),
+            Reply(
+                {
+                    "id": "r1",
+                    "conversation_id": "conv-1",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "Order 42 "},
+                            {"type": "text", "text": "shipped."},
+                        ],
+                    },
+                    "metadata": {"trace_id": "abc"},
+                }
+            ),
+            Reply(
+                {
+                    "conversation_id": "conv-1",
+                    "message": {"content": []},
+                    "status": "failed",
+                }
+            ),
+        )
+        reply = agent7.chat("Where is order 42?", subject="alice")
+        assert session.sent[0][:2] == (
+            "GET",
+            "https://gw/v1/g1/support/.well-known/hopsworks-agent.json",
+        )
+        method, url, _, body = session.sent[1]
+        assert (method, url) == ("POST", "https://gw/v1/g1/support/v1/chat")
+        assert body == {
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "Where is order 42?"}],
+            },
+            "subject": "alice",
+        }
+        assert reply.text == "Order 42 shipped."
+        assert reply.conversation_id == "conv-1" and reply.trace_id == "abc"
+        assert not reply.failed
+
+        follow_up = agent7.chat("And 43?", conversation_id=reply.conversation_id)
+        assert session.sent[2][3]["conversation_id"] == "conv-1"
+        assert follow_up.failed and follow_up.text == ""
+        # the manifest is read once
+        assert len(session.sent) == 3
+
+    def test_chat_falls_back_to_the_default_route_without_a_manifest(self):
+        _, agent7, session = agent(
+            Reply({"errorMsg": "Not Found"}, status=404),
+            Reply(
+                {
+                    "conversation_id": "c",
+                    "message": {"content": [{"type": "text", "text": "hi"}]},
+                }
+            ),
+        )
+        assert agent7.chat("hello").text == "hi"
+        assert session.sent[1][1] == "https://gw/v1/g1/support/v1/chat"
+
+    def test_a_refusal_from_the_agent_is_an_error_with_its_message(self):
+        _, agent7, _ = agent(
+            Reply({"endpoints": {}}),
+            Reply({"errorMsg": "guardrail: refused"}, status=422),
+        )
+        with pytest.raises(AgentServingError, match="guardrail: refused") as err:
+            agent7.chat("do something bad")
+        assert err.value.status == 422
+
+    def test_the_serving_row_is_read_lazily_for_a_bare_handle(self):
+        evals, session = client(Reply(SERVING))
+        bare = Agent(evals, 7)
+        assert bare.name == "support"
+        assert session.sent[0][:2] == ("GET", "/serving/7")
 
 
 class TestModels:

@@ -13,7 +13,7 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from ._transport import AgentEvalsError, Transport
+from ._transport import AgentServingError, Transport
 from .models import (
     Check,
     EvalJob,
@@ -32,7 +32,7 @@ from .models import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-    from .client import AgentEvals
+    from .client import AgentServing
 
 EVALS = "/agent-evals"
 
@@ -82,7 +82,7 @@ def _messages(
 
 
 class Suites:
-    def __init__(self, client: AgentEvals):
+    def __init__(self, client: AgentServing):
         self._client = client
         self._http: Transport = client.http
 
@@ -259,7 +259,7 @@ class Suites:
 
 
 class Tasks:
-    def __init__(self, client: AgentEvals):
+    def __init__(self, client: AgentServing):
         self._client = client
         self._http = client.http
 
@@ -399,7 +399,7 @@ class Tasks:
 class Evaluators:
     """The project's library of saved checks."""
 
-    def __init__(self, client: AgentEvals):
+    def __init__(self, client: AgentServing):
         self._client = client
         self._http = client.http
 
@@ -458,7 +458,7 @@ class Evaluators:
 
 
 class Runs:
-    def __init__(self, client: AgentEvals):
+    def __init__(self, client: AgentServing):
         self._client = client
         self._http = client.http
 
@@ -514,7 +514,7 @@ class Runs:
         are datetimes or epoch milliseconds.
         """
         if evaluator is None and suite is None:
-            raise AgentEvalsError("name an evaluator or a suite to grade with")
+            raise AgentServingError("name an evaluator or a suite to grade with")
         template_id = (
             evaluator.template_id
             if isinstance(evaluator, EvaluatorTemplate)
@@ -606,7 +606,7 @@ class Runs:
     def wait(
         self, run: Run | str, *, timeout_s: float = 1800, poll_s: float = 5
     ) -> Run:
-        """Poll until the run finishes. Raises AgentEvalsError on timeout; returns the final row."""
+        """Poll until the run finishes. Raises AgentServingError on timeout; returns the final row."""
         run_id = run.run_id if isinstance(run, Run) else run
         deadline = time.monotonic() + timeout_s
         while True:
@@ -614,7 +614,7 @@ class Runs:
             if current.finished:
                 return current
             if time.monotonic() >= deadline:
-                raise AgentEvalsError(
+                raise AgentServingError(
                     f"run {run_id} still {current.status} after {timeout_s:.0f}s"
                 )
             time.sleep(poll_s)
@@ -623,7 +623,7 @@ class Runs:
 class Jobs:
     """The per-deployment jobs: the evaluation job and the failure-analysis job."""
 
-    def __init__(self, client: AgentEvals):
+    def __init__(self, client: AgentServing):
         self._client = client
         self._http = client.http
 
