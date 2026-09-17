@@ -301,6 +301,31 @@ class Project:
         return self._dataset_api
 
     @public
+    def get_agent_evals_api(self):
+        """Get the agent evaluation and tracing API for the project.
+
+        Everything the Hopsworks UI does for agent evaluation and tracing:
+        suites, tasks, the evaluator library, runs, the per-deployment jobs,
+        and, per deployment, traces, feedback, failure analysis and metrics.
+
+        Returns:
+            `hopsworks_agent_eval.sdk.AgentEvals`: the client, bound to this project.
+        """
+        from hopsworks_agent_eval.sdk import AgentEvals
+        from hopsworks_agent_eval.sdk._transport import (
+            HopsworksClientSession,
+            Transport,
+        )
+
+        instance = client.get_instance()
+        base_url = getattr(instance, "_base_url", "") or ""
+        host = (
+            base_url.split("/hopsworks-api", 1)[0] if base_url else "https://hopsworks"
+        )
+        transport = Transport(host, self.id, session=HopsworksClientSession(instance))
+        return AgentEvals(host, self.id, transport=transport)
+
+    @public
     def get_environment_api(self) -> environment_api.EnvironmentApi:
         """Get the Python environment API for the project.
 
