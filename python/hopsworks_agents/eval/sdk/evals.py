@@ -506,12 +506,14 @@ class Runs:
         suite: Suite | None = None,
         since: Any = None,
         until: Any = None,
+        sample: int | None = None,
         start: bool = True,
     ) -> Run:
         """Grade a sample of real traffic with a saved evaluator or a suite's checks.
 
         Without a window, what arrived since the last successful sample; ``since`` and ``until``
-        are datetimes or epoch milliseconds.
+        are datetimes or epoch milliseconds. ``sample`` caps how many conversations are graded,
+        since each costs a judge call.
         """
         if evaluator is None and suite is None:
             raise AgentServingError("name an evaluator or a suite to grade with")
@@ -529,6 +531,7 @@ class Runs:
                     suiteId=suite.suite_id if suite else None,
                     suiteVersion=suite.version if suite else None,
                     **{"from": epoch_ms(since), "to": epoch_ms(until)},
+                    sample=sample,
                     start="true" if start else "false",
                 )
             )

@@ -307,7 +307,7 @@ class TestRuns:
         with pytest.raises(AgentServingError, match="evaluator or a suite"):
             evals.runs.sample(7)
         since = datetime(2026, 9, 1, tzinfo=timezone.utc)
-        evals.runs.sample(7, evaluator="tmpl", since=since)
+        evals.runs.sample(7, evaluator="tmpl", since=since, sample=10)
         params = session.sent[0][2]
         assert params["templateId"] == "tmpl" and params["from"] == int(
             since.timestamp() * 1000
