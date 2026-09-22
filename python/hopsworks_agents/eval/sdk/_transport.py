@@ -250,10 +250,8 @@ def connected_transport() -> Transport | None:
     try:
         from hopsworks_common import client as hopsworks_client  # noqa: PLC0415
 
-        instance = hopsworks_client.get_instance()
+        instance = hopsworks_client._get_instance()
     except Exception:  # noqa: BLE001 -- not connected, or the library is not there
-        return None
-    if instance is None:
         return None
     project_id = getattr(instance, "_project_id", None)
     base_url = getattr(instance, "_base_url", None) or ""
@@ -268,8 +266,7 @@ def _istio_client() -> Any:
     try:
         from hopsworks_common import client as hopsworks_client  # noqa: PLC0415
 
-        if hopsworks_client.get_instance() is None:
-            return None
+        hopsworks_client._get_instance()  # raises when nothing is connected
         return hopsworks_client.istio._get_instance()
     except Exception:  # noqa: BLE001 -- not logged in, or no inference endpoint
         return None

@@ -744,6 +744,57 @@ class TestTracing:
         )
 
 
+class FakeHopsworksClient:
+    """What hopsworks.login() leaves behind: the connected client, with the project on it."""
+
+    def __init__(self, replies):
+        self._base_url = "https://h:443/hopsworks-api/api"
+        self._project_id = 1
+        self._project_name = "p"
+        self.replies = list(replies)
+        self.sent = []
+
+    def _send_request(
+        self,
+        method,
+        path_params,
+        query_params=None,
+        headers=None,
+        data=None,
+        stream=False,
+        timeout=None,
+    ):
+        self.sent.append(
+            (method, "/" + "/".join(str(p) for p in path_params), query_params, data)
+        )
+        return self.replies.pop(0) if self.replies else {}
+
+
+class TestConnectedClient:
+    def test_get_agent_serving_rides_the_connected_client(self, monkeypatch):
+        from hopsworks_common import client as hopsworks_client
+        from hopsworks_common.project import Project
+
+        fake = FakeHopsworksClient([SERVING])
+        monkeypatch.setattr(hopsworks_client, "_client", fake)
+        project = Project.__new__(Project)
+        project._id = 1
+        agents = project.get_agent_serving()
+        assert isinstance(agents, AgentServing)
+        agent7 = agents.get_agent("support")
+        assert agent7.name == "support"
+        assert fake.sent[0][:3] == ("GET", "/project/1/serving", {"name": "support"})
+
+    def test_the_connected_transport_is_none_when_nothing_is_connected(
+        self, monkeypatch
+    ):
+        from hopsworks_agents.eval.sdk._transport import connected_transport
+        from hopsworks_common import client as hopsworks_client
+
+        monkeypatch.setattr(hopsworks_client, "_client", None)
+        assert connected_transport() is None
+
+
 class TestAgents:
     def test_an_agent_is_fetched_by_name_or_id_and_refused_for_a_model(self):
         evals, session = client(Reply(SERVING), Reply(SERVING))

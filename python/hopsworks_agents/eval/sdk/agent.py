@@ -250,12 +250,13 @@ class Agent:
             from hopsworks_common import client as hopsworks_client  # noqa: PLC0415
             from hsml.deployment import Deployment  # noqa: PLC0415
 
-            instance = hopsworks_client.get_instance()
-            if instance is None:
+            try:
+                instance = hopsworks_client._get_instance()
+            except Exception as err:  # noqa: BLE001 -- the client's own "not connected"
                 raise AgentServingError(
                     "the deployment handle needs hopsworks.login(); this client "
                     "is not connected"
-                )
+                ) from err
             deployment = Deployment.from_response_json(dict(self.serving))
             deployment.model_registry_id = instance._project_id
             deployment.project_name = instance._project_name

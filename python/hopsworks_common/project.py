@@ -329,7 +329,7 @@ class Project:
             Transport,
         )
 
-        instance = client.get_instance()
+        instance = client._get_instance()
         base_url = getattr(instance, "_base_url", "") or ""
         host = (
             base_url.split("/hopsworks-api", 1)[0] if base_url else "https://hopsworks"
