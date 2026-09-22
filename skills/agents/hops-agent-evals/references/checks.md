@@ -1,6 +1,6 @@
 # Checks, judges and providers
 
-Reference for **hops-agent-evals**. A suite's checks are `check(type, name=None, **config)` entries from `hopsworks_agent_eval.sdk`; a task supplies each check's expectation under the check's **name** in `expectations={...}`.
+Reference for **hops-agent-evals**. A suite's checks are `check(type, name=None, **config)` entries from `hopsworks_agents.eval.sdk`; a task supplies each check's expectation under the check's **name** in `expectations={...}`.
 
 ## Check kinds
 

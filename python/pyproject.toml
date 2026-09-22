@@ -184,8 +184,7 @@ include = [
     "hsfs*",
     "hsml*",
     "hopsworks_common*",
-    "hopsworks_agent_protocol*",
-    "hopsworks_agent_eval*",
+    "hopsworks_agents*",
 ]
 
 [tool.setuptools.package-data]
@@ -280,7 +279,7 @@ convention = "google"
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
-known-third-party = ["hopsworks", "hsfs", "hsml", "hopsworks_common", "hopsworks_agent_protocol", "hopsworks_agent_eval"]
+known-third-party = ["hopsworks", "hsfs", "hsml", "hopsworks_common", "hopsworks_agents"]
 
 
 [tool.ruff.format]

@@ -39,7 +39,7 @@ from hopsworks_common.core import (
 
 
 if TYPE_CHECKING:
-    from hopsworks_agent_eval.sdk import AgentServing
+    from hopsworks_agents.eval.sdk import AgentServing
     from hsfs.feature_store import FeatureStore
     from hsml.model_registry import ModelRegistry
     from hsml.model_serving import ModelServing
@@ -323,8 +323,8 @@ class Project:
         Returns:
             The Agent Serving API.
         """
-        from hopsworks_agent_eval.sdk import AgentServing
-        from hopsworks_agent_eval.sdk._transport import (
+        from hopsworks_agents.eval.sdk import AgentServing
+        from hopsworks_agents.eval.sdk._transport import (
             HopsworksClientSession,
             Transport,
         )

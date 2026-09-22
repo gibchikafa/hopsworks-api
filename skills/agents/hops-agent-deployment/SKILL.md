@@ -12,7 +12,7 @@ Start with a deterministic **LLM workflow** (a fixed sequence of steps) and only
 ## Contract
 - **Input:** an entry script (a `.py` file, or a directory containing a `pyproject.toml`) that builds an `AgentApp`, from HopsFS or from a Git repository.
 - **Output:** a served agent deployment: chat-ready in the Hopsworks UI, traced, reachable from Python with `agent.chat()`.
-- **Pre-condition:** auth + serving reachable; the agent name and environment are valid (`[A-Za-z0-9_-]+`); the environment is cloned from `python-agent-pipeline` (it carries `hopsworks_agent_protocol` and the `agents` extra).
+- **Pre-condition:** auth + serving reachable; the agent name and environment are valid (`[A-Za-z0-9_-]+`); the environment is cloned from `python-agent-pipeline` (it carries `hopsworks_agents.protocol` and the `agents` extra).
 
 ## Smoke-test (cheap pre/post-flight)
 
@@ -30,11 +30,11 @@ hops agent logs my_agent         # startup errors land here
 
 ## Write the entry script
 
-Build the agent with the framework of your choice and wrap it in `AgentApp` from `hopsworks_agent_protocol`. `AgentApp` is a FastAPI app that speaks the **Hopsworks Agent Protocol**: the chat panel detects it from its manifest, `/v1/chat` and `/v1/chat/stream` are served, health and readiness probes exist, CORS is on, and when tracing is enabled on the deployment the library wires OpenTelemetry itself. The script runs as a program in the pod, so serve the app on port 8080 in its main block.
+Build the agent with the framework of your choice and wrap it in `AgentApp` from `hopsworks_agents.protocol`. `AgentApp` is a FastAPI app that speaks the **Hopsworks Agent Protocol**: the chat panel detects it from its manifest, `/v1/chat` and `/v1/chat/stream` are served, health and readiness probes exist, CORS is on, and when tracing is enabled on the deployment the library wires OpenTelemetry itself. The script runs as a program in the pod, so serve the app on port 8080 in its main block.
 
 ```python
 # my_agent.py
-from hopsworks_agent_protocol import AgentApp, AgentError
+from hopsworks_agents.protocol import AgentApp, AgentError
 
 agent_app = AgentApp(
     name="Support agent",
@@ -72,9 +72,9 @@ What matters in the handler:
 - A `@chat` handler returning a `str` (or `AgentResponse.text(...)`) is enough when you do not stream. Only `@stream` gives token deltas in the panel.
 - **Tracing is automatic** when enabled on the deployment. Every LLM call, tool call and retrieval becomes a span; these traces are what evaluation, feedback and failure analysis read. An agent without tracing cannot be debugged or improved, so enable it.
 - **Memory:** `memory=ManagedMemoryService(summarize=anthropic_summarizer(), long_term=True)` gives a conversation buffer, a rolling summary and durable per-user memory with no storage to set up; read it with `ctx.system_context()` and `ctx.history`.
-- **Evaluation-safe writes:** an agent that writes (refunds, tickets) checks `hopsworks_agent_protocol.evaluation.in_evaluation()` in its tools and skips the real write, so a sandboxed suite can run against the production deployment (`eval_per_request=True` on the app). A deployment that exists only to be evaluated sets `EVAL_MODE=true` instead.
+- **Evaluation-safe writes:** an agent that writes (refunds, tickets) checks `hopsworks_agents.protocol.evaluation.in_evaluation()` in its tools and skips the real write, so a sandboxed suite can run against the production deployment (`eval_per_request=True` on the app). A deployment that exists only to be evaluated sets `EVAL_MODE=true` instead.
 
-Streaming, multimodal content, memory tiers, progress events and the structure graph are in the protocol README: `python/hopsworks_agent_protocol/README.md`.
+Streaming, multimodal content, memory tiers, progress events and the structure graph are in the protocol README: `python/hopsworks_agents.protocol/README.md`.
 
 ## Deploy — CLI (preferred for local sources)
 

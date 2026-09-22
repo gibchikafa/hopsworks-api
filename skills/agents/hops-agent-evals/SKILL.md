@@ -36,7 +36,7 @@ agents.suites.list(); agents.runs.list(agent.id)
 ## 1. Suites: author, publish, run
 
 ```python
-from hopsworks_agent_eval.sdk import check
+from hopsworks_agents.eval.sdk import check
 
 suite = agents.suites.create(
     "Refunds",
@@ -121,7 +121,7 @@ The analysis files its own feedback rows (`detector:*`, `judge:*`) at run start,
 Metrics for dashboards: `agent.trace_metrics()`, `agent.llm_metrics()` (calls, tokens, cost), `agent.tool_metrics()` (calls, errors, latency per tool), each over `since`/`until`.
 
 ## Toolset
-- **SDK:** `project.get_agent_serving()` → `AgentServing` (`suites`, `tasks`, `evaluators`, `runs`, `jobs`, `get_agent`) and `Agent` (`run`, `sample`, `traces`, `feedback`, `triage`, `clusters`, `analyse`, `gates`, metrics). Import `check` from `hopsworks_agent_eval.sdk`.
+- **SDK:** `project.get_agent_serving()` → `AgentServing` (`suites`, `tasks`, `evaluators`, `runs`, `jobs`, `get_agent`) and `Agent` (`run`, `sample`, `traces`, `feedback`, `triage`, `clusters`, `analyse`, `gates`, metrics). Import `check` from `hopsworks_agents.eval.sdk`.
 - **UI:** Deployments → agent → **Evals** tab (runs, feedback, failure analysis) and the **Evals** menu (suites, tasks, evaluator library, jobs).
 - **CLI:** none yet; `hops job` operates the evaluation and analysis jobs once created.
 - **REST:** `/project/{id}/agent-evals/*` and `/project/{id}/otel/servings/{deployment}/*`, only where the SDK does not cover it.
