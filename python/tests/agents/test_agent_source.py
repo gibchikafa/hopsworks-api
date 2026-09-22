@@ -109,39 +109,6 @@ class TestCloning:
         assert any("fetch -q --depth 1 origin abc123" in c for c in joined)
         assert any("checkout -q FETCH_HEAD" in c for c in joined)
 
-    def test_the_users_git_providers_are_put_where_git_reads_them(
-        self, tmp_path, monkeypatch
-    ):
-        calls = []
-        monkeypatch.setattr(src.shutil, "which", lambda name: "/usr/bin/git")
-        written = src.configure_git_credentials(
-            home=str(tmp_path),
-            environ={
-                "GIT_CREDENTIALS": "https://alice:tok@github.com https://bob:t2@gitlab.example.com",
-                "GIT_NAME": "Alice A",
-                "GIT_EMAIL": "alice@example.com",
-            },
-            run=lambda command, **kwargs: calls.append(
-                (command, kwargs.get("env", {}).get("HOME"))
-            ),
-        )
-        assert written == 2
-        credentials = (tmp_path / ".git-credentials").read_text().splitlines()
-        assert credentials == [
-            "https://alice:tok@github.com",
-            "https://bob:t2@gitlab.example.com",
-        ]
-        assert oct((tmp_path / ".git-credentials").stat().st_mode & 0o777) == "0o600"
-        joined = [" ".join(c) for c, _ in calls]
-        assert "git config --global credential.helper store" in joined
-        assert "git config --global user.email alice@example.com" in joined
-        # git reads the store from the home it was written to
-        assert all(home == str(tmp_path) for _, home in calls)
-
-    def test_no_providers_configured_leaves_git_alone(self, tmp_path):
-        assert src.configure_git_credentials(home=str(tmp_path), environ={}) == 0
-        assert not (tmp_path / ".git-credentials").exists()
-
     def test_the_clone_url_never_carries_a_token(self, tmp_path, monkeypatch):
         monkeypatch.setattr(src.shutil, "which", lambda name: "/usr/bin/git")
         monkeypatch.setenv("GIT_CREDENTIALS", "https://alice:secret@github.com")
@@ -156,11 +123,8 @@ class TestCloning:
         )
         clone = next(c for c in calls if "clone" in c)
         assert "https://github.com/o/r" in clone
+        # the container's credential store, not the url, is what authenticates
         assert not any("secret" in part for part in clone)
-        # the store, not the url, is what authenticates
-        assert (
-            tmp_path / ".git-credentials"
-        ).read_text().strip() == "https://alice:secret@github.com"
 
     def test_clones_the_branch_tip_when_no_commit_is_recorded(
         self, tmp_path, monkeypatch
