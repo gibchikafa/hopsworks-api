@@ -54,7 +54,7 @@ class TestManifestAndHealth:
         assert manifest["protocol"] == "hopsworks-agent"
         assert manifest["protocol_version"] == "1.4"
         assert manifest["agent"]["name"] == "Test agent"
-        assert manifest["endpoints"] == {"chat": "/v1/chat"}
+        assert manifest["endpoints"] == {"chat": "/v1/chat", "feedback": "/v1/feedback"}
         assert manifest["capabilities"]["streaming"] is False
         assert manifest["ui"]["welcome_message"] == "Hi!"
         assert manifest["ui"]["suggested_prompts"] == ["What is attention?"]
@@ -3242,3 +3242,149 @@ class TestTheEvalModeVariableIsSettable:
         from hopsworks_agents.protocol import conventions
 
         assert conventions.EVAL_MODE_ENV.startswith("EVAL_")
+
+
+class FakePlatform:
+    """Hopsworks as the deployment's feedback relay sees it, recording what it was sent."""
+
+    def __init__(self, latest=None):
+        self.posted: list[tuple[str, dict]] = []
+        self.latest = latest or {}
+
+    def post_feedback(self, trace_id, body):
+        self.posted.append((trace_id, body))
+        return {"feedbackId": "fb-1", "reviewer": "user:" + body.get("reviewer", "")}
+
+    def latest_trace_id(self, conversation_id):
+        return self.latest.get(conversation_id)
+
+
+class UnavailablePlatform:
+    def post_feedback(self, trace_id, body):
+        raise AgentError(
+            "nowhere to record feedback", code="platform_unavailable", status_code=503
+        )
+
+    def latest_trace_id(self, conversation_id):
+        raise AgentError(
+            "nowhere to look", code="platform_unavailable", status_code=503
+        )
+
+
+def build_feedback_app(platform):
+    app = AgentApp(name="Rated agent", platform=platform)
+
+    @app.chat
+    async def chat(request):
+        response = AgentResponse.text(
+            text="ok", conversation_id=request.conversation_id
+        )
+        response.metadata["trace_id"] = "trace-for-" + request.conversation_id
+        return response
+
+    return app
+
+
+class TestFeedback:
+    def test_the_manifest_advertises_feedback(self):
+        manifest = (
+            TestClient(build_basic_app())
+            .get("/.well-known/hopsworks-agent.json")
+            .json()
+        )
+        assert manifest["endpoints"]["feedback"] == "/v1/feedback"
+        assert manifest["capabilities"]["feedback"] is True
+
+    def test_a_verdict_on_a_trace_is_relayed_under_the_end_user(self):
+        platform = FakePlatform()
+        client = TestClient(build_feedback_app(platform))
+        response = client.post(
+            "/v1/feedback",
+            json={
+                "trace_id": "abc",
+                "verdict": "negative",
+                "issue_category": "wrong_tool",
+                "corrected_answer": "look the customer up by key",
+                "subject": "alice",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "feedback_id": "fb-1",
+            "trace_id": "abc",
+            "verdict": "negative",
+            "reviewer": "user:alice",
+        }
+        [(trace_id, body)] = platform.posted
+        assert trace_id == "abc"
+        assert body == {
+            "verdict": "negative",
+            "issueCategory": "wrong_tool",
+            "correctedAnswer": "look the customer up by key",
+            "reviewer": "alice",
+        }
+
+    def test_without_a_subject_the_verdict_is_anonymous(self):
+        platform = FakePlatform()
+        TestClient(build_feedback_app(platform)).post(
+            "/v1/feedback",
+            json={"trace_id": "abc", "verdict": "positive", "subject": "  "},
+        )
+        assert platform.posted[0][1]["reviewer"] == "anonymous"
+
+    def test_a_conversation_resolves_to_the_turn_the_app_just_answered(self):
+        platform = FakePlatform()
+        client = TestClient(build_feedback_app(platform))
+        reply = client.post("/v1/chat", json=make_request("hi", "conv-9")).json()
+        assert reply["metadata"]["trace_id"] == "trace-for-conv-9"
+        client.post(
+            "/v1/feedback", json={"conversation_id": "conv-9", "verdict": "positive"}
+        )
+        assert platform.posted[0][0] == "trace-for-conv-9"
+
+    def test_a_conversation_this_replica_never_saw_is_looked_up(self):
+        platform = FakePlatform(latest={"conv-old": "trace-old"})
+        client = TestClient(build_feedback_app(platform))
+        client.post(
+            "/v1/feedback", json={"conversation_id": "conv-old", "verdict": "negative"}
+        )
+        assert platform.posted[0][0] == "trace-old"
+        missing = client.post(
+            "/v1/feedback", json={"conversation_id": "conv-none", "verdict": "negative"}
+        )
+        assert missing.status_code == 404
+        assert missing.json()["detail"]["code"] == "trace_not_found"
+
+    def test_the_turn_must_be_named(self):
+        response = TestClient(build_feedback_app(FakePlatform())).post(
+            "/v1/feedback", json={"verdict": "negative"}
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "invalid_request"
+
+    def test_an_unknown_verdict_is_refused_before_anything_is_sent(self):
+        platform = FakePlatform()
+        response = TestClient(build_feedback_app(platform)).post(
+            "/v1/feedback", json={"trace_id": "abc", "verdict": "meh"}
+        )
+        assert response.status_code == 422 and platform.posted == []
+
+    def test_outside_hopsworks_the_route_says_so(self):
+        response = TestClient(build_feedback_app(UnavailablePlatform())).post(
+            "/v1/feedback", json={"trace_id": "abc", "verdict": "negative"}
+        )
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "platform_unavailable"
+
+    def test_remembered_traces_are_bounded(self):
+        from hopsworks_agents.protocol import app as app_module
+
+        app = build_feedback_app(FakePlatform())
+        client = TestClient(app)
+        for i in range(app_module.LAST_TRACE_LIMIT + 5):
+            client.post("/v1/chat", json=make_request("hi", f"c{i}"))
+        assert len(app._last_trace) == app_module.LAST_TRACE_LIMIT
+        assert (
+            "c0" not in app._last_trace
+            and f"c{app_module.LAST_TRACE_LIMIT + 4}" in app._last_trace
+        )

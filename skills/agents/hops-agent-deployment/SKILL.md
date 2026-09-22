@@ -151,6 +151,13 @@ agent.manifest()                               # what the agent advertises
 
 Messages go through the cluster's inference gateway, the route the chat panel uses; the logged-in user's credential is accepted there. From outside Hopsworks, log in with an API key.
 
+**A custom chat UI** talks to `agent.url` directly with the serving credential: `POST /v1/chat`
+with `{"message": {"role": "user", "content": [{"type": "text", "text": "..."}]}}`, and its users
+rate a reply with `POST /v1/feedback` `{"trace_id": reply.metadata.trace_id, "verdict":
+"negative", "subject": "<who>"}`. The agent relays the verdict to Hopsworks itself, filed under
+`user:<subject>`; the end user needs no Hopsworks account and the UI never learns the Hopsworks
+address. See "End-user feedback" in `python/hopsworks_agents/protocol/README.md`.
+
 ## Next Steps
 
 - Evaluate, monitor and improve the deployed agent: **hops-agent-evals** (suites, online sampling, feedback, failure analysis).

@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
@@ -37,6 +38,7 @@ from .models import (
     AgentError,
     ChatRequest,
     ChatResponse,
+    FeedbackRequest,
     new_conversation_id,
     new_response_id,
 )
@@ -69,6 +71,10 @@ def _wants_context(handler: Callable[..., Any]) -> bool:
         return False
 
 
+#: conversations whose latest trace the app keeps in memory for feedback by conversation
+LAST_TRACE_LIMIT = 10_000
+
+
 class AgentApp(FastAPI):
     def __init__(
         self,
@@ -85,6 +91,7 @@ class AgentApp(FastAPI):
         memory: ChatMemory | None = None,
         tool_events: bool = False,
         graph: Any = None,
+        platform: Any | None = None,
         allow_cors: bool = True,
         eval_per_request: bool = False,
         **fastapi_kwargs: Any,
@@ -116,6 +123,14 @@ class AgentApp(FastAPI):
         from .graph import to_graph_spec
 
         self._graph_spec = to_graph_spec(graph)
+
+        # End-user feedback, relayed to Hopsworks over the deployment's own
+        # credential. The last trace of each conversation is remembered so a
+        # client that never kept the trace id can still name the turn.
+        from .platform import PlatformClient
+
+        self._platform = platform if platform is not None else PlatformClient()
+        self._last_trace: OrderedDict[str, str] = OrderedDict()
 
         # framework: explicit arg > AGENT_FRAMEWORK env (platform-injected) >
         # 'custom'. Drives which OpenInference instrumentor tracing activates.
@@ -257,6 +272,8 @@ class AgentApp(FastAPI):
                 endpoints["subjects"] = "/v1/subjects"
         if self._graph_spec is not None:
             endpoints["graph"] = "/v1/graph"
+        # always served: a chat UI built on the gateway has nowhere else to send a verdict
+        endpoints["feedback"] = "/v1/feedback"
         return {
             "protocol": PROTOCOL,
             "protocol_version": PROTOCOL_VERSION,
@@ -283,6 +300,8 @@ class AgentApp(FastAPI):
                 "tool_events": self._tool_events,
                 # a structure graph is available to visualize the agent
                 "graph": self._graph_spec is not None,
+                # end users can rate a turn through the agent itself
+                "feedback": True,
                 # This agent continues an incoming W3C trace context and
                 # propagates hopsworks.eval.* baggage onto its spans, so a
                 # caller that generated the traceparent can find the trace
@@ -513,6 +532,7 @@ class AgentApp(FastAPI):
         if ctx.subject_source == "app":
             response.metadata.setdefault("subject", ctx.subject)
         _annotate_span(ctx, response)
+        self._remember_trace(response)
         return response
 
     def _merge_stream_result(
@@ -649,6 +669,7 @@ class AgentApp(FastAPI):
                 self._stream_events(ctx, raw), media_type="text/event-stream"
             )
 
+        self._register_feedback_route()
         if self.memory is not None:
             self._register_conversation_routes()
 
@@ -657,6 +678,67 @@ class AgentApp(FastAPI):
             @self.get("/v1/graph")
             async def graph() -> dict[str, Any]:
                 return self._graph_spec
+
+    def _remember_trace(self, response: ChatResponse) -> None:
+        trace_id = (response.metadata or {}).get("trace_id")
+        if not trace_id or not response.conversation_id:
+            return
+        self._last_trace[response.conversation_id] = str(trace_id)
+        self._last_trace.move_to_end(response.conversation_id)
+        while len(self._last_trace) > LAST_TRACE_LIMIT:
+            self._last_trace.popitem(last=False)
+
+    def _register_feedback_route(self) -> None:
+        @self.post("/v1/feedback")
+        async def feedback_route(request: FeedbackRequest) -> JSONResponse:
+            try:
+                trace_id = await asyncio.to_thread(self._resolve_trace, request)
+                body = {
+                    "verdict": request.verdict,
+                    "issueCategory": request.issue_category,
+                    "correctedAnswer": request.corrected_answer,
+                    "expectedToolBehavior": request.expected_tool_behavior,
+                    "note": request.note,
+                    # filed under the end user, never under the deployment's own account
+                    "reviewer": (request.subject or "").strip() or "anonymous",
+                }
+                stored = await asyncio.to_thread(
+                    self._platform.post_feedback,
+                    trace_id,
+                    {k: v for k, v in body.items() if v is not None},
+                )
+            except AgentError as err:
+                return _error_response(err)
+            return JSONResponse(
+                {
+                    "feedback_id": (stored or {}).get("feedbackId"),
+                    "trace_id": trace_id,
+                    "verdict": request.verdict,
+                    "reviewer": (stored or {}).get("reviewer"),
+                }
+            )
+
+    def _resolve_trace(self, request: FeedbackRequest) -> str:
+        """The turn a verdict is about: the trace named, or the conversation's latest."""
+        if request.trace_id:
+            return request.trace_id
+        if not request.conversation_id:
+            raise AgentError(
+                "name the turn: trace_id from the reply, or conversation_id",
+                code="invalid_request",
+                status_code=400,
+            )
+        remembered = self._last_trace.get(request.conversation_id)
+        if remembered:
+            return remembered
+        found = self._platform.latest_trace_id(request.conversation_id)
+        if not found:
+            raise AgentError(
+                f"no trace recorded yet for conversation {request.conversation_id}",
+                code="trace_not_found",
+                status_code=404,
+            )
+        return found
 
     def _register_conversation_routes(self) -> None:
         @self.get("/v1/conversations")

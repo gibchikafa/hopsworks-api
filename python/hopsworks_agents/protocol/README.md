@@ -297,6 +297,31 @@ otherwise), which the chat panel renders as progress chips.
           yield delta
   ```
 
+## End-user feedback
+
+A chat UI built on the agent's endpoint has the gateway, the serving credential and the
+`trace_id` on every reply, and nothing else -- no Hopsworks address, and its users need no
+Hopsworks account. So the agent takes the verdict and relays it itself:
+
+```http
+POST /v1/feedback
+{"trace_id": "<metadata.trace_id of the reply>", "verdict": "negative",
+ "issue_category": "wrong_tool", "corrected_answer": "...", "note": "...",
+ "subject": "alice"}
+```
+
+`verdict` is `positive`, `negative` or `false_alarm`. A client that kept no trace id sends
+`conversation_id` instead and the latest turn of that conversation is rated. `subject` is who
+is speaking, asserted by the client like the chat request's; the row lands in Hopsworks under
+the reviewer `user:<subject>` (`user:anonymous` without one), so it never collides with a
+reviewer's account, shows as **user** in the Feedback tab, and reaches the failure analysis as
+a signal to triage rather than a verdict that closes the trace. The manifest advertises
+`endpoints.feedback` and `capabilities.feedback`.
+
+The relay runs over the deployment's own credential (`REST_ENDPOINT`, `DEPLOYMENT_ID` and the
+key the platform mounts), the same way an agent reaches the feature store; outside a
+deployment the route answers `503 platform_unavailable`.
+
 ## Operational endpoints
 
 - `GET /health` — liveness (process up).

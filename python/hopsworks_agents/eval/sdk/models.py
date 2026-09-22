@@ -536,12 +536,19 @@ class Feedback(ApiModel):
 
     @property
     def source(self) -> str:
-        """Who gave it: a person, a detector the platform ran over the trace, or an online judge."""
+        """Who gave it: a reviewer, an end user of the agent, a detector, or an online judge.
+
+        ``human`` is a reviewer in Hopsworks; ``end_user`` someone talking to the agent
+        through its feedback endpoint; ``detector`` the platform reading the trace; ``judge``
+        an online evaluator.
+        """
         reviewer = self.reviewer or ""
         if reviewer.startswith("detector:"):
             return "detector"
         if reviewer.startswith("judge:"):
             return "judge"
+        if reviewer.startswith("user:"):
+            return "end_user"
         return "human"
 
 

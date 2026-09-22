@@ -240,6 +240,7 @@ class TestAutomatedSignals:
         assert t.origin_of(feedback(reviewer="alice@x")) == "human"
         assert t.origin_of(feedback(reviewer="detector:timeout")) == "detector"
         assert t.origin_of(feedback(reviewer="judge:rubric")) == "judge"
+        assert t.origin_of(feedback(reviewer="user:alice")) == "end_user"
 
 
 class TestSourceCode:

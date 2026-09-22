@@ -111,6 +111,25 @@ class ChatRequest(BaseModel):
         return [{"role": self.message.role, "content": self.text}]
 
 
+class FeedbackRequest(BaseModel):
+    """An end user's verdict on a turn, posted to the agent's own ``/v1/feedback``.
+
+    Names the turn by ``trace_id`` (from the reply's metadata) or, when a client
+    never kept it, by ``conversation_id``, which resolves to that conversation's
+    latest turn. ``subject`` is who is speaking, client-asserted like the chat
+    request's; it is what the feedback is filed under.
+    """
+
+    trace_id: str | None = None
+    conversation_id: str | None = None
+    verdict: Literal["positive", "negative", "false_alarm"]
+    issue_category: str | None = None
+    corrected_answer: str | None = None
+    expected_tool_behavior: str | None = None
+    note: str | None = None
+    subject: str | None = None
+
+
 class ChatResponse(BaseModel):
     id: str = Field(default_factory=new_response_id)
     conversation_id: str

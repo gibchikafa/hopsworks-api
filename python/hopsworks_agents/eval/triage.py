@@ -90,17 +90,23 @@ REDACTION_KINDS = (
 #: Reviewers that are not people. A detector files the trace it flagged as negative feedback so
 #: the same pipeline reviews it; the prefix says which one, and the prompt reads accordingly.
 AUTOMATED_PREFIXES = ("detector:", "judge:")
+#: An end user of the agent, through the agent's own feedback endpoint: a person, but one who
+#: never saw the rubric, so their verdict is read like a reviewer's and weighed like a signal.
+END_USER_PREFIX = "user:"
 
 
 def origin_of(feedback: dict[str, Any]) -> str:
-    """Who gave this verdict: "human", "detector" (an error, timeout or anomaly the platform.
+    """Who gave this verdict: "human" (a reviewer in Hopsworks), "end_user" (someone talking to.
 
-    found in the trace) or "judge" (an online evaluator that failed the trace).
+    the agent), "detector" (an error, timeout or anomaly the platform found in the trace) or
+    "judge" (an online evaluator that failed the trace).
     """
     reviewer = str(feedback.get("reviewer") or "")
     for prefix in AUTOMATED_PREFIXES:
         if reviewer.startswith(prefix):
             return prefix[:-1]
+    if reviewer.startswith(END_USER_PREFIX):
+        return "end_user"
     return "human"
 
 
@@ -319,7 +325,7 @@ def render_triage_prompt(inp: TriageInput, *, context_turns: int = 20) -> str:
         )
     verdict = str(feedback.get("verdict") or "negative")
     reviewer = str(feedback.get("reviewer") or "")
-    if origin_of(feedback) == "human":
+    if origin_of(feedback) in ("human", "end_user"):
         intro = HUMAN_INTRO.format(verdict=verdict)
         feedback_block = HUMAN_FEEDBACK.format(
             verdict=verdict,
